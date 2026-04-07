@@ -1,20 +1,20 @@
-# SDS-AX Architecture
+# ATOM-CODE Architecture
 
 > **구현 스택**: Python 3.11+ / DeepAgents / LangGraph / LangChain  
 > **이 문서**: 기술적 구현 청사진. 무엇을 만들지는 AGENTS.md, 어떻게 만들지는 이 문서.  
-> **핵심 원칙**: DeepAgents 프레임워크가 제공하는 것은 그대로 사용. SDS-AX는 프레임워크 위에 커스텀 레이어만 추가.
+> **핵심 원칙**: DeepAgents 프레임워크가 제공하는 것은 그대로 사용. ATOM-CODE는 프레임워크 위에 커스텀 레이어만 추가.
 
 ---
 
 ## 1. 시스템 개요
 
-SDS-AX는 DeepAgents 프레임워크의 `create_deep_agent()`를 중심으로 구축된 CLI 코딩 에이전트다.
+ATOM-CODE는 DeepAgents 프레임워크의 `create_deep_agent()`를 중심으로 구축된 CLI 코딩 에이전트다.
 프레임워크가 StateGraph, 미들웨어, 내장 도구, 서브에이전트 관리, HITL, 스킬을 모두 처리하므로
-SDS-AX는 **커스텀 도구 + 커스텀 레이어**만 구현한다.
+ATOM-CODE는 **커스텀 도구 + 커스텀 레이어**만 구현한다.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
-│                           SDS-AX CLI                                │
+│                           ATOM-CODE CLI                                │
 │                                                                     │
 │  ┌────────────┐  ┌────────────────┐  ┌─────────────────────────┐   │
 │  │ Textual UI │  │ Non-Interactive │  │ LangGraph API Server    │   │
@@ -43,7 +43,7 @@ SDS-AX는 **커스텀 도구 + 커스텀 레이어**만 구현한다.
 │  │  └───────────────────────────────────────────────────┘     │   │
 │  │                                                             │   │
 │  │  ┌───────────────────────────────────────────────────┐     │   │
-│  │  │  SDS-AX 커스텀 레이어                              │     │   │
+│  │  │  ATOM-CODE 커스텀 레이어                              │     │   │
 │  │  │                                                   │     │   │
 │  │  │  커스텀 도구: git, bash, web_search, fetch_url,    │     │   │
 │  │  │              ask_user                              │     │   │
@@ -67,18 +67,18 @@ SDS-AX는 **커스텀 도구 + 커스텀 레이어**만 구현한다.
 
 ### 프레임워크 vs 커스텀 경계
 
-| 영역 | DeepAgents 자동 제공 | SDS-AX 커스텀 구현 |
-|------|---------------------|-------------------|
-| 그래프 구조 | StateGraph, 노드, 엣지, 라우팅 | - |
-| 미들웨어 | TodoList, Filesystem, SubAgent, HITL, Skills, Memory | Stall Detection, Context Compaction |
+| 영역 | DeepAgents 자동 제공 | ATOM-CODE 커스텀 구현                           |
+|------|---------------------|--------------------------------------------|
+| 그래프 구조 | StateGraph, 노드, 엣지, 라우팅 | -                                          |
+| 미들웨어 | TodoList, Filesystem, SubAgent, HITL, Skills, Memory | Stall Detection, Context Compaction        |
 | 내장 도구 | write_todos, ls, read_file, write_file, edit_file, glob, grep, task | git, bash, web_search, fetch_url, ask_user |
-| 서브에이전트 | 선언적 config, task 도구, 생명주기 관리 | - |
-| HITL | interrupt_on, Command(resume=...) | interrupt 기반 ask_user |
-| 백엔드 | CompositeBackend, StateBackend, StoreBackend, FilesystemBackend | Auto-Dream 메모리 추출 |
-| 스킬 | skills=["./skills/"], SKILL.md 포맷 | 커스텀 스킬 파일 |
-| 체크포인터 | MemorySaver, PostgresSaver | 세션 복원 로직 |
-| CLI/TUI | - | Textual UI, 슬래시 커맨드 |
-| MCP | - | trust_level 권한 모델 |
+| 서브에이전트 | 선언적 config, task 도구, 생명주기 관리 | -                                          |
+| HITL | interrupt_on, Command(resume=...) | interrupt 기반 ask_user                      |
+| 백엔드 | CompositeBackend, StateBackend, StoreBackend, FilesystemBackend | Auto-Dream 메모리 추출                          |
+| 스킬 | skills=["./skills/"], SKILL.md 포맷 | 커스텀 스킬 파일                                  |
+| 체크포인터 | MemorySaver, PostgresSaver | 세션 복원 로직                                   |
+| CLI/TUI | - | Textual UI, 슬래시 커맨드                        |
+| MCP | - | trust_level 권한 모델                          |
 
 ---
 
@@ -192,7 +192,7 @@ sds-ax/
 
 ### 3.1 create_sds_ax_agent() (core/agent.py)
 
-`create_deep_agent()`를 래핑하여 SDS-AX 전용 설정을 주입하는 단일 진입점.
+`create_deep_agent()`를 래핑하여 ATOM-CODE 전용 설정을 주입하는 단일 진입점.
 
 ```python
 # sds_ax/core/agent.py
@@ -217,7 +217,7 @@ from sds_ax.config.schema import AgentConfig
 
 
 def create_sds_ax_agent(config: AgentConfig):
-    """SDS-AX 에이전트 생성 — create_deep_agent() 래퍼
+    """ATOM-CODE 에이전트 생성 — create_deep_agent() 래퍼
 
     DeepAgents 프레임워크가 자동 제공하는 것:
     - StateGraph 구성 (agent → tools → agent 루프)
@@ -226,7 +226,7 @@ def create_sds_ax_agent(config: AgentConfig):
     - 서브에이전트 관리 (선언적 config → task 도구)
     - HITL (interrupt_on → Command(resume=...))
 
-    SDS-AX가 추가하는 것:
+    ATOM-CODE가 추가하는 것:
     - 커스텀 도구: git, bash, web_search, fetch_url, ask_user
     - 서브에이전트 타입 정의 (explorer, coder, researcher, reviewer, planner)
     - CompositeBackend 구성 (/memories/ → StoreBackend)
@@ -370,7 +370,7 @@ def _build_system_prompt(config: AgentConfig) -> str:
 
 # 핵심 시스템 프롬프트 (하드코딩)
 CORE_SYSTEM_PROMPT = """
-You are SDS-AX, a CLI coding agent. You help users with software development tasks
+You are ATOM-CODE, a CLI coding agent. You help users with software development tasks
 by reading, writing, and editing code, running commands, searching the web,
 and managing git repositories.
 
@@ -462,7 +462,7 @@ agent.invoke(
 ## 4. 커스텀 도구 구현
 
 프레임워크 내장 도구(`write_todos`, `ls`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `task`)는
-자동 제공되므로, SDS-AX는 아래 5개의 커스텀 도구만 구현한다.
+자동 제공되므로, ATOM-CODE는 아래 5개의 커스텀 도구만 구현한다.
 
 ### 4.1 git 도구 (tools/git.py)
 
@@ -831,7 +831,7 @@ def run_interactive(config: AgentConfig):
     session_id = f"session-{int(time.time())}"
     invoke_config = {"configurable": {"thread_id": session_id}}
 
-    print("SDS-AX ready. Type /help for commands.")
+    print("ATOM-CODE ready. Type /help for commands.")
 
     while True:
         user_input = input("> ").strip()
@@ -957,7 +957,7 @@ def run_non_interactive(config: AgentConfig, task: str):
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description="SDS-AX CLI Agent")
+    parser = argparse.ArgumentParser(description="ATOM-CODE CLI Agent")
     parser.add_argument("-n", "--non-interactive", type=str, help="Run single task")
     parser.add_argument("--resume", type=str, help="Resume session by ID")
     args = parser.parse_args()
@@ -980,7 +980,7 @@ def main():
 ### 4.5.1 스트리밍 모드 선택 가이드
 
 LangGraph `graph.stream()`은 `stream_mode` 파라미터로 출력 형태를 제어한다.
-SDS-AX CLI는 용도에 따라 세 가지 모드를 사용할 수 있다.
+ATOM-CODE CLI는 용도에 따라 세 가지 모드를 사용할 수 있다.
 
 | `stream_mode` | 용도 | 설명 |
 |---|---|---|
@@ -996,7 +996,7 @@ SDS-AX CLI는 용도에 따라 세 가지 모드를 사용할 수 있다.
 
 ## 4.6 커스텀 레이어 통합 (미들웨어 훅)
 
-SDS-AX의 커스텀 레이어(Stall Detection, Context Compaction, Auto-Dream)는
+ATOM-CODE의 커스텀 레이어(Stall Detection, Context Compaction, Auto-Dream)는
 `create_deep_agent()`의 `middleware` 파라미터를 통해 에이전트 실행 루프에 삽입된다.
 
 ```python
@@ -1008,7 +1008,7 @@ from sds_ax.layers.auto_dream import AutoDreamExtractor
 
 
 def _build_custom_middleware(config, store):
-    """SDS-AX 커스텀 레이어를 DeepAgents 미들웨어 훅으로 통합"""
+    """ATOM-CODE 커스텀 레이어를 DeepAgents 미들웨어 훅으로 통합"""
 
     stall_detector = StallDetector(config)
     compactor = ContextCompactor(config)
@@ -1100,7 +1100,7 @@ agent = create_deep_agent(
 ## 5. 서브에이전트 구현
 
 DeepAgents 프레임워크가 서브에이전트의 생명주기를 완전히 관리한다.
-SDS-AX는 `create_deep_agent(subagents=[...])` 에 선언적 config만 전달하면 된다.
+ATOM-CODE는 `create_deep_agent(subagents=[...])` 에 선언적 config만 전달하면 된다.
 
 ### 5.1 선언적 서브에이전트 config
 
@@ -1197,7 +1197,7 @@ backend=lambda rt: CompositeBackend(
 ### 6.2 Auto-Dream 메모리 추출 (layers/auto_dream.py)
 
 프레임워크의 MemoryMiddleware가 메모리 검색/주입을 처리하지만,
-**대화에서 새로운 메모리를 자동 추출**하는 것은 SDS-AX 커스텀 레이어다.
+**대화에서 새로운 메모리를 자동 추출**하는 것은 ATOM-CODE 커스텀 레이어다.
 
 ```python
 # sds_ax/layers/auto_dream.py
@@ -1315,7 +1315,7 @@ def _parse_json_response(text: str) -> list[dict]:
 
 ## 7. Stall Detection (layers/stall_detector.py)
 
-프레임워크에 없는 SDS-AX 전용 커스텀 레이어.
+프레임워크에 없는 ATOM-CODE 전용 커스텀 레이어.
 에이전트가 진행하지 못하고 빈 턴을 반복할 때 단계적으로 복구한다.
 
 ### 7.1 복구 단계
@@ -1782,7 +1782,7 @@ class MCPConfig(BaseModel):
 
 
 class AgentConfig(BaseModel):
-    """SDS-AX 전체 설정 스키마"""
+    """ATOM-CODE 전체 설정 스키마"""
     model: str = "claude-sonnet-4-5-20250929"
     fallback_model: str = "claude-haiku-4-5-20251001"
     project_root: str = "."

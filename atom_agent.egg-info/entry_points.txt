@@ -1,0 +1,2 @@
+[console_scripts]
+atom = atom.cli:main
