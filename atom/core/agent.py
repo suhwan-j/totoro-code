@@ -356,20 +356,29 @@ def _make_vllm(model_name: str):
 
 
 def _build_system_prompt(config: AgentConfig) -> str:
-    """Assemble the system prompt."""
-    sections = [CORE_SYSTEM_PROMPT]
+    """Assemble the system prompt.
 
-    sections.append(f"""
-# Environment
-- Working directory: {Path(config.project_root).resolve()}
-- Current date: {datetime.now().strftime('%Y-%m-%d')}
-""")
+    Order: static content first (cacheable prefix), dynamic content last.
+    This maximizes prefix KV cache hits on vLLM (--enable-prefix-caching)
+    and Anthropic (cache_control ephemeral).
+    """
+    # ── Static prefix (cacheable) ──
+    sections = [CORE_SYSTEM_PROMPT]
 
     agents_md = _load_agents_md(config.project_root)
     if agents_md:
         if len(agents_md) > 16000:
             agents_md = agents_md[:16000] + "\n... (truncated)"
         sections.append(f"# Project Rules (AGENTS.md)\n{agents_md}")
+
+    # ── Dynamic suffix (changes per session/model switch) ──
+    sections.append(f"""
+# Environment
+- Working directory: {Path(config.project_root).resolve()}
+- Current date: {datetime.now().strftime('%Y-%m-%d')}
+- Model: {config.model}
+- Provider: {config.provider}
+""")
 
     return "\n\n".join(sections)
 

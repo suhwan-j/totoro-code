@@ -35,6 +35,13 @@ def _banner() -> str:
     return "\n".join(lines)
 
 
+def _is_slash_command(text: str) -> bool:
+    """Check if input is a slash command (not a file path like /home/...)."""
+    from atom.commands.registry import get_command_names
+    first_word = text.strip().split()[0].lower() if text.strip() else ""
+    return any(first_word == cmd or first_word.startswith(cmd + " ") for cmd in get_command_names())
+
+
 # ─── ANSI formatting helpers ───
 _DIM = "\033[0;90m"
 _BLUE = "\033[0;34m"
@@ -154,7 +161,7 @@ def _run_interactive(agent, invoke_config: dict, session_manager=None,
             print(f"  Mode: {label}")
             continue
 
-        if user_input.startswith("/"):
+        if _is_slash_command(user_input):
             result = handle_slash_command(user_input, agent, invoke_config)
             if result == "__exit__":
                 print("Bye!")
@@ -248,8 +255,9 @@ def _stream_with_hitl(agent, user_input: str, config: dict, auto_approve: bool =
 
     input_payload = {"messages": [{"role": "user", "content": user_input}]}
 
+    max_hitl_rounds = 20  # Safety limit to prevent infinite loops
     try:
-        while True:
+        for _round in range(max_hitl_rounds):
             interrupt_info = _do_stream(agent, input_payload, config, tracker=tracker, verbose=verbose)
 
             if interrupt_info is None:
@@ -296,6 +304,7 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
 
     got_ai_response = False
     event_count = 0
+    had_error = False
 
     try:
         for event in agent.stream(input_payload, config=config, stream_mode="updates"):
@@ -373,6 +382,7 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
         with tracker._lock:
             tracker._clear_previous()
             tracker._last_panel_lines = 0
+        had_error = True
         _safe_print(f"\n{_RED}[Stream error] {sanitize_text(str(e))}{_RESET}", flush=True)
 
         # Fallback: try non-streaming invoke
@@ -398,14 +408,16 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
         else:
             _safe_print(f"{_YELLOW}(Got {event_count} events but no AI text — model may not support tool calling. Try --verbose){_RESET}", flush=True)
 
-    # Check for pending interrupts
-    try:
-        state = agent.get_state(config)
-        if state and state.next:
-            if hasattr(state, "tasks") and state.tasks:
-                return list(state.tasks)
-    except Exception:
-        pass
+    # Check for pending interrupts — but NOT if we hit an error
+    # (retrying after an error like context-too-long causes infinite loops)
+    if not had_error:
+        try:
+            state = agent.get_state(config)
+            if state and state.next:
+                if hasattr(state, "tasks") and state.tasks:
+                    return list(state.tasks)
+        except Exception:
+            pass
 
     return None
 
