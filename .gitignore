@@ -1,3 +1,16 @@
+# Environment / IDE
 .env
 .idea
+.vscode
 .venv
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Atom settings (contains API keys)
+.atom/settings.json

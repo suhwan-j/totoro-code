@@ -1,4 +1,5 @@
 """Atom CLI entry point."""
+import os
 import sys
 import time
 import json
@@ -8,6 +9,11 @@ from langgraph.types import Command
 
 from atom.utils import sanitize_text
 from atom.status import StatusTracker
+from atom.diff import format_file_diff, find_line_number, safe_print as _safe_print
+
+
+# ─── Pending tool calls for diff display ───
+_pending_file_ops: dict[str, dict] = {}  # tool_call_id -> {name, args}
 
 
 def _banner() -> str:
@@ -73,12 +79,16 @@ def main():
                         help="LLM provider (default: auto-detect from env)")
     parser.add_argument("--resume", type=str, metavar="SESSION_ID", help="Resume a previous session")
     parser.add_argument("--list-sessions", action="store_true", help="List all sessions")
+    parser.add_argument("--setup", action="store_true", help="Re-run the setup wizard")
     parser.add_argument("--verbose", action="store_true", help="Show detailed tool results")
     parser.add_argument("task", nargs="*", help="Task to run (alternative to -n)")
     args = parser.parse_args()
 
     from atom.config.settings import load_config, ensure_api_keys
-    ensure_api_keys()
+    ensure_api_keys(force_setup=args.setup)
+
+    if args.setup:
+        print("  Setup complete. Starting Atom...\n")
 
     cli_overrides = {}
     if args.auto_approve:
@@ -97,11 +107,16 @@ def main():
     from atom.session.manager import SessionManager
     session_manager = SessionManager(checkpointer=checkpointer)
 
+    # Initialize skill manager
+    from atom.skills import SkillManager
+    skill_manager = SkillManager(config.project_root)
+
     # Inject into command registry
-    from atom.commands.registry import set_session_manager, set_auto_dream, set_agent_config
+    from atom.commands.registry import set_session_manager, set_auto_dream, set_agent_config, set_skill_manager
     set_session_manager(session_manager)
     set_auto_dream(auto_dream)
     set_agent_config(config)
+    set_skill_manager(skill_manager)
 
     task = args.non_interactive or (" ".join(args.task) if args.task else None)
     verbose = args.verbose
@@ -155,10 +170,7 @@ def _run_interactive(agent, invoke_config: dict, session_manager=None,
 
         # Handle /mode command
         if user_input.strip().lower() == "/mode":
-            new_mode = handler.cycle_mode()
-            from atom.input import MODE_LABELS
-            label = MODE_LABELS.get(new_mode, new_mode)
-            print(f"  Mode: {label}")
+            handler.cycle_mode()
             continue
 
         if _is_slash_command(user_input):
@@ -172,6 +184,19 @@ def _run_interactive(agent, invoke_config: dict, session_manager=None,
                 agent = _handle_model_change(result, config, session_manager)
                 if agent is None:
                     continue
+                continue
+
+            # Handle /skill reload
+            if result == "__skill_reload__":
+                print(f"{_DIM}  Reloading skills...{_RESET}", flush=True)
+                from atom.core.agent import create_atom_agent
+                try:
+                    agent, _, _, auto_dream = create_atom_agent(config)
+                    from atom.commands.registry import set_auto_dream
+                    set_auto_dream(auto_dream)
+                    print(f"  {_BOLD}Skills reloaded.{_RESET}")
+                except Exception as e:
+                    print(f"{_RED}  Reload failed: {e}{_RESET}")
                 continue
 
             if result:
@@ -191,12 +216,14 @@ def _run_interactive(agent, invoke_config: dict, session_manager=None,
             session_id = invoke_config["configurable"]["thread_id"]
             session_manager.update_activity(session_id)
 
+        print()  # spacing after user input
         _stream_with_hitl(
             agent, user_input, invoke_config,
             auto_approve=handler.is_auto_approve,
             verbose=verbose,
+            handler=handler,
         )
-        print()
+        print()  # spacing before next prompt
 
 
 def _handle_model_change(sentinel: str, config, session_manager):
@@ -242,15 +269,28 @@ def _handle_model_change(sentinel: str, config, session_manager):
         return None
 
 
-def _stream_with_hitl(agent, user_input: str, config: dict, auto_approve: bool = False, verbose: bool = False):
+def _stream_with_hitl(agent, user_input: str, config: dict, auto_approve: bool = False,
+                      verbose: bool = False, handler=None):
     """Stream agent response with HITL interrupt handling and live status dashboard."""
-    from atom.orchestrator import set_tracker, RenderThread
+    from atom.orchestrator import set_tracker, set_pane_manager, RenderThread
+    from atom.pane import PaneManager
+    from atom.hotkey import HotkeyListener
 
     tracker = StatusTracker()
     set_tracker(tracker)
 
+    # PaneManager for detailed subagent tracking
+    pane_manager = PaneManager()
+    set_pane_manager(pane_manager)
+    tracker._pane_manager = pane_manager  # Link for rendering
+
+    # Hotkey listener for mode switching during streaming
+    hotkey = None
+    if handler:
+        hotkey = HotkeyListener(handler)
+
     # Start background render thread for real-time dashboard updates
-    render_thread = RenderThread(tracker, interval=2.0)
+    render_thread = RenderThread(tracker, interval=0.5)
     render_thread.start()
 
     input_payload = {"messages": [{"role": "user", "content": user_input}]}
@@ -258,7 +298,19 @@ def _stream_with_hitl(agent, user_input: str, config: dict, auto_approve: bool =
     max_hitl_rounds = 20  # Safety limit to prevent infinite loops
     try:
         for _round in range(max_hitl_rounds):
+            # Activate hotkey listener during streaming
+            if hotkey:
+                hotkey.activate()
+
             interrupt_info = _do_stream(agent, input_payload, config, tracker=tracker, verbose=verbose)
+
+            # Deactivate hotkey before HITL or exit
+            if hotkey:
+                hotkey.deactivate()
+
+            # Check if mode changed during streaming
+            if handler and handler.is_auto_approve:
+                auto_approve = True
 
             if interrupt_info is None:
                 break
@@ -271,16 +323,35 @@ def _stream_with_hitl(agent, user_input: str, config: dict, auto_approve: bool =
 
             if auto_approve:
                 decisions = [{"type": "approve"} for _ in _flatten_decisions(interrupt_info)]
+                signal = _HITL_CONTINUE
             else:
-                decisions = _collect_hitl_decisions(interrupt_info)
+                decisions, signal = _collect_hitl_decisions(interrupt_info)
 
-            input_payload = Command(resume={"decisions": decisions})
+            # Handle abort — stop the turn immediately
+            if signal == _HITL_ABORT:
+                resume_value = _build_resume_payload(interrupt_info, decisions)
+                try:
+                    for _ in agent.stream(Command(resume=resume_value), config=config, stream_mode="updates"):
+                        pass
+                except Exception:
+                    pass
+                break
+
+            # Handle approve-all — auto-approve for rest of this turn
+            if signal == _HITL_APPROVE_ALL:
+                auto_approve = True
+                if handler:
+                    handler.mode = "auto-approve"
+
+            input_payload = Command(resume=_build_resume_payload(interrupt_info, decisions))
 
             # Restart render thread for next iteration
             render_thread = RenderThread(tracker, interval=2.0)
             render_thread.start()
 
     finally:
+        if hotkey:
+            hotkey.shutdown()
         render_thread.shutdown()
         render_thread.join(timeout=1)
 
@@ -305,6 +376,7 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
     got_ai_response = False
     event_count = 0
     had_error = False
+    ai_header_printed = False
 
     try:
         for event in agent.stream(input_payload, config=config, stream_mode="updates"):
@@ -346,6 +418,24 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
                         tool_calls = getattr(msg, "tool_calls", [])
                         for tc in tool_calls:
                             tracker.on_tool_start(tc.get("name", "unknown"), tc.get("args", {}))
+                            # Capture file operations for diff display
+                            tc_name = tc.get("name", "")
+                            if tc_name in ("edit_file", "write_file"):
+                                tc_id = tc.get("id")
+                                if tc_id:
+                                    op_args = tc.get("args", {})
+                                    # For edit_file, capture line number before the edit happens
+                                    line_num = None
+                                    if tc_name == "edit_file":
+                                        line_num = find_line_number(
+                                            op_args.get("file_path", ""),
+                                            op_args.get("old_string", ""),
+                                        )
+                                    _pending_file_ops[tc_id] = {
+                                        "name": tc_name,
+                                        "args": op_args,
+                                        "start_line": line_num,
+                                    }
 
                         # Model is working if it produces tool calls OR text
                         if tool_calls:
@@ -357,18 +447,33 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
                             if text:
                                 got_ai_response = True
                                 with tracker._lock:
+                                    tracker._got_ai_text = True
                                     tracker._clear_previous()
                                     tracker._last_panel_lines = 0
+                                    if not ai_header_printed:
+                                        _safe_print(f"{_DIM}● > {_RESET}", end="", flush=True)
+                                        ai_header_printed = True
                                     _safe_print(text, flush=True)
                                     tracker._mark_dirty()
 
                     elif msg_type == "tool":
                         name = getattr(msg, "name", "tool")
                         tool_content = sanitize_text(str(msg.content))
+                        tool_call_id = getattr(msg, "tool_call_id", None)
                         tracker.on_tool_end(name, tool_content[:200])
 
+                        # Show diff for file operations
                         is_error = "error" in tool_content.lower()[:100]
-                        if verbose or is_error:
+                        if tool_call_id and tool_call_id in _pending_file_ops and not is_error:
+                            op = _pending_file_ops.pop(tool_call_id)
+                            diff_text = format_file_diff(op["name"], op["args"], op.get("start_line"))
+                            if diff_text:
+                                with tracker._lock:
+                                    tracker._clear_previous()
+                                    tracker._last_panel_lines = 0
+                                    _safe_print(diff_text, flush=True)
+                                    tracker._mark_dirty()
+                        elif verbose or is_error:
                             display = tool_content[:500 if verbose else 300]
                             color = _MAGENTA if verbose else _RED
                             prefix = f"  <- {name}:" if verbose else f"  [error] {name}:"
@@ -422,15 +527,6 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
     return None
 
 
-def _safe_print(text: str, **kwargs):
-    """Print with surrogate-safe encoding."""
-    try:
-        print(sanitize_text(text), **kwargs)
-    except UnicodeEncodeError:
-        safe = text.encode("utf-8", errors="replace").decode("utf-8")
-        print(safe, **kwargs)
-
-
 def _extract_text(content) -> str:
     """Extract text from various content formats."""
     if isinstance(content, str):
@@ -444,6 +540,32 @@ def _extract_text(content) -> str:
                 parts.append(block)
         return sanitize_text("".join(parts))
     return sanitize_text(str(content))
+
+
+def _build_resume_payload(interrupts, decisions: list[dict]):
+    """Build the resume payload, handling single and multiple interrupts.
+
+    For a single interrupt: resume={"decisions": decisions}
+    For multiple interrupts: resume={interrupt_id: {"decisions": [decision]}, ...}
+    """
+    # Check if interrupts have IDs (newer LangGraph API)
+    interrupt_ids = []
+    for task in interrupts:
+        if hasattr(task, "interrupts") and task.interrupts:
+            for intr in task.interrupts:
+                intr_id = getattr(intr, "id", None) or getattr(intr, "interrupt_id", None)
+                if intr_id:
+                    interrupt_ids.append(intr_id)
+
+    if len(interrupt_ids) > 1 and len(decisions) == len(interrupt_ids):
+        # Multiple interrupts — map each decision to its interrupt ID
+        return {
+            iid: {"decisions": [dec]}
+            for iid, dec in zip(interrupt_ids, decisions)
+        }
+
+    # Single interrupt or no IDs — use flat format
+    return {"decisions": decisions}
 
 
 def _flatten_decisions(interrupts) -> list:
@@ -466,8 +588,20 @@ def _flatten_decisions(interrupts) -> list:
     return count
 
 
-def _collect_hitl_decisions(interrupts) -> list[dict]:
-    """Prompt user for HITL decisions."""
+_HITL_CONTINUE = "continue"   # normal flow
+_HITL_APPROVE_ALL = "approve_all"  # auto-approve remaining
+_HITL_ABORT = "abort"          # stop the turn
+
+
+def _collect_hitl_decisions(interrupts) -> tuple[list[dict], str]:
+    """Prompt user for HITL decisions.
+
+    Returns:
+        (decisions, signal) where signal is one of:
+        - _HITL_CONTINUE: process normally
+        - _HITL_APPROVE_ALL: auto-approve all remaining in this turn
+        - _HITL_ABORT: reject all and stop the turn
+    """
     decisions = []
 
     for task in interrupts:
@@ -497,27 +631,61 @@ def _collect_hitl_decisions(interrupts) -> list[dict]:
                 tool_name = str(action)
                 tool_args = {}
 
-            print(f"\n{_YELLOW}[APPROVAL REQUIRED]{_RESET} {_BOLD}{tool_name}{_RESET}")
-            if tool_args:
-                if isinstance(tool_args, dict):
-                    for k, v in tool_args.items():
-                        v_str = sanitize_text(str(v))
-                        if len(v_str) > 200:
-                            v_str = v_str[:200] + "..."
-                        print(f"  {k}: {v_str}")
+            # Show diff format for file operations, generic format for others
+            if tool_name in ("edit_file", "write_file") and isinstance(tool_args, dict):
+                line_num = None
+                if tool_name == "edit_file":
+                    line_num = find_line_number(
+                        tool_args.get("file_path", ""),
+                        tool_args.get("old_string", ""),
+                    )
+                diff_text = format_file_diff(tool_name, tool_args, line_num)
+                if diff_text:
+                    print(f"\n{_YELLOW}[APPROVAL REQUIRED]{_RESET}")
+                    _safe_print(diff_text)
                 else:
-                    print(f"  {sanitize_text(str(tool_args))}")
-            print(f"  {_BOLD}(a){_RESET}pprove / {_BOLD}(r){_RESET}eject / {_BOLD}(e){_RESET}dit ?")
+                    print(f"\n{_YELLOW}[APPROVAL REQUIRED]{_RESET} {_BOLD}{tool_name}{_RESET}")
+            else:
+                print(f"\n{_YELLOW}[APPROVAL REQUIRED]{_RESET} {_BOLD}{tool_name}{_RESET}")
+                if tool_args:
+                    if isinstance(tool_args, dict):
+                        for k, v in tool_args.items():
+                            v_str = sanitize_text(str(v))
+                            if len(v_str) > 200:
+                                v_str = v_str[:200] + "..."
+                            print(f"  {k}: {v_str}")
+                    else:
+                        print(f"  {sanitize_text(str(tool_args))}")
+            print(f"  {_BOLD}(a){_RESET}pprove / {_BOLD}(A){_RESET}pprove all / {_BOLD}(r){_RESET}eject / {_BOLD}(x){_RESET} abort / {_BOLD}(e){_RESET}dit ?")
 
             try:
-                choice = input("  > ").strip().lower()
+                choice = input("  > ").strip()
             except (EOFError, KeyboardInterrupt):
+                print(f"\n  {_RED}✗ Aborted{_RESET}")
                 decisions.append({"type": "reject"})
-                continue
+                return decisions, _HITL_ABORT
 
-            if choice in ("a", "approve", "y", "yes", ""):
+            # Approve all remaining
+            if choice in ("A", "approve all", "aa"):
+                print(f"  {_YELLOW}⚡ Auto-approve enabled for this turn{_RESET}")
                 decisions.append({"type": "approve"})
-            elif choice in ("e", "edit"):
+                remaining = len(action_requests) - (action_requests.index(action) + 1)
+                for _ in range(remaining):
+                    decisions.append({"type": "approve"})
+                return decisions, _HITL_APPROVE_ALL
+
+            # Abort — reject and stop turn
+            if choice.lower() in ("x", "abort", "q", "quit", "stop"):
+                print(f"  {_RED}✗ Aborted — stopping this turn{_RESET}")
+                decisions.append({"type": "reject"})
+                return decisions, _HITL_ABORT
+
+            # Approve
+            if choice.lower() in ("a", "approve", "y", "yes", ""):
+                decisions.append({"type": "approve"})
+
+            # Edit
+            elif choice.lower() in ("e", "edit"):
                 user_edit = input("  How to change? > ").strip()
                 if not user_edit:
                     decisions.append({"type": "approve"})
@@ -537,10 +705,13 @@ def _collect_hitl_decisions(interrupts) -> list[dict]:
                 else:
                     print("  Edit failed, rejecting.")
                     decisions.append({"type": "reject"})
+
+            # Reject
             else:
+                print(f"  {_RED}✗ Rejected{_RESET}")
                 decisions.append({"type": "reject"})
 
-    return decisions
+    return decisions, _HITL_CONTINUE
 
 
 def _apply_natural_language_edit(tool_name: str, original_args: dict, user_instruction: str) -> dict | None:

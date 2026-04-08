@@ -5,6 +5,7 @@ import time
 _session_manager = None
 _auto_dream = None
 _agent_config = None  # AgentConfig instance for /model
+_skill_manager = None  # SkillManager instance
 
 
 def set_session_manager(manager):
@@ -25,6 +26,12 @@ def set_agent_config(config):
     _agent_config = config
 
 
+def set_skill_manager(manager):
+    """Inject SkillManager for /skill commands."""
+    global _skill_manager
+    _skill_manager = manager
+
+
 # Command metadata for autocomplete and menu
 COMMAND_LIST = [
     ("/help",     "Show help message"),
@@ -36,6 +43,7 @@ COMMAND_LIST = [
     ("/sessions", "List all sessions with numbers"),
     ("/compact",  "Force context compaction"),
     ("/memory",   "Show/clear memories"),
+    ("/skill",    "Manage skills (list/add/install/remove/reload)"),
     ("/tasks",    "Show active sub-agent tasks"),
     ("/status",   "Show agent status"),
     ("/exit",     "Exit the CLI"),
@@ -64,6 +72,7 @@ def handle_slash_command(user_input: str, agent, invoke_config: dict) -> str | N
         "/sessions": _cmd_sessions,
         "/compact": _cmd_compact,
         "/memory": _cmd_memory,
+        "/skill": _cmd_skill,
         "/tasks": _cmd_tasks,
         "/status": _cmd_status,
     }
@@ -280,6 +289,97 @@ def _cmd_memory(args, agent, config) -> str:
         return "All memories cleared."
 
     return _auto_dream.format_memories_display()
+
+
+def _cmd_skill(args, agent, config) -> str:
+    """Handle /skill subcommands: list, add, install, remove, reload."""
+    if _skill_manager is None:
+        return "Skill manager not available."
+
+    parts = args.strip().split(maxsplit=1)
+    subcmd = parts[0].lower() if parts else "list"
+    subargs = parts[1] if len(parts) > 1 else ""
+
+    if subcmd == "list" or subcmd == "ls":
+        return f"\033[1mSkills:\033[0m\n{_skill_manager.format_list()}"
+
+    if subcmd == "add":
+        return _skill_add_interactive(subargs)
+
+    if subcmd == "install":
+        if not subargs:
+            return (
+                "Usage:\n"
+                "  /skill install <url>                      Install single SKILL.md\n"
+                "  /skill install <repo-url> --skill <name>  Install skill from GitHub repo"
+            )
+        # Parse --skill flag
+        skill_name = ""
+        source = subargs
+        if "--skill" in subargs:
+            parts_list = subargs.split("--skill")
+            source = parts_list[0].strip()
+            skill_name = parts_list[1].strip() if len(parts_list) > 1 else ""
+        if not source:
+            return "Missing source URL."
+        msg, path = _skill_manager.install_skill(source, skill_name=skill_name)
+        if path:
+            return f"\033[0;32m✓\033[0m {msg} → {path}"
+        return f"\033[1;31m✗\033[0m {msg}"
+
+    if subcmd == "remove" or subcmd == "rm":
+        if not subargs:
+            return "Usage: /skill remove <name>"
+        return _skill_manager.remove_skill(subargs)
+
+    if subcmd == "reload":
+        return "__skill_reload__"
+
+    return (
+        "\033[1mSkill commands:\033[0m\n"
+        "  /skill list                                Show installed skills\n"
+        "  /skill add <name>                          Create a new skill interactively\n"
+        "  /skill install <url>                       Install single SKILL.md\n"
+        "  /skill install <repo-url> --skill <name>   Install skill from GitHub repo\n"
+        "  /skill remove <name>                       Remove a skill\n"
+        "  /skill reload                              Reload skills into current session"
+    )
+
+
+def _skill_add_interactive(name: str) -> str:
+    """Interactive skill creation."""
+    if _skill_manager is None:
+        return "Skill manager not available."
+
+    if not name:
+        try:
+            name = input("  Skill name: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            return "Cancelled."
+    if not name:
+        return "Cancelled."
+
+    try:
+        description = input("  Description: ").strip()
+        tools = input("  Allowed tools (comma-separated, Enter to skip): ").strip()
+        scope = input("  Scope (project/global) [project]: ").strip().lower() or "project"
+
+        print("  Instructions (end with empty line):")
+        lines = []
+        while True:
+            line = input("  > ")
+            if not line:
+                break
+            lines.append(line)
+    except (EOFError, KeyboardInterrupt):
+        return "Cancelled."
+
+    if not lines:
+        return "No instructions provided. Cancelled."
+
+    content = "\n".join(lines) + "\n"
+    path = _skill_manager.add_skill(name, description or name, content, tools, scope)
+    return f"\033[0;32m✓\033[0m Saved to {path}"
 
 
 def _cmd_tasks(args, agent, config) -> str:

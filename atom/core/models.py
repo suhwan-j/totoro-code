@@ -1,6 +1,5 @@
 """LLM provider initialization."""
 import os
-from dotenv import load_dotenv
 
 
 def create_lightweight_model(model_name: str = "claude-haiku-4-5-20251001"):
@@ -9,7 +8,6 @@ def create_lightweight_model(model_name: str = "claude-haiku-4-5-20251001"):
     Tries providers in order: OpenRouter, Anthropic, OpenAI.
     Returns None if no provider is available.
     """
-    load_dotenv()
 
     openrouter_key = os.environ.get("OPENROUTER_API_KEY")
     if openrouter_key:

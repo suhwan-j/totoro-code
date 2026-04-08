@@ -3,7 +3,6 @@ import os
 from pathlib import Path
 from datetime import datetime
 
-from dotenv import load_dotenv
 from deepagents import create_deep_agent, SubAgent
 from deepagents.backends import LocalShellBackend
 from langgraph.checkpoint.memory import MemorySaver
@@ -35,13 +34,17 @@ Example:
     {"content": "Test and verify", "status": "pending"}
   ])
 
-### Step 2: Execute via PARALLEL Sub-agents (REQUIRED for multi-file tasks)
-Use orchestrate_tool to run multiple sub-agents IN PARALLEL:
+### Step 2: Execute via PARALLEL Sub-agents (MANDATORY)
+You MUST use orchestrate_tool to delegate ALL file creation and modification work.
+NEVER call write_file, edit_file, or execute directly — always delegate to sub-agents.
+
   orchestrate_tool('[
     {"type": "coder", "task": "Create index.html with React setup"},
     {"type": "coder", "task": "Create src/App.tsx with component"},
     {"type": "coder", "task": "Create api/handler.ts serverless function"}
   ]')
+
+Group as many independent tasks as possible into ONE orchestrate_tool call.
 After orchestrate completes, update todos with write_todos to mark completed items.
 
 ### Step 3: Verify
@@ -49,32 +52,29 @@ Use execute to test the result (open files, run servers, check output).
 
 CRITICAL RULES:
 - Your FIRST action MUST be write_todos — no exceptions.
-- Use orchestrate_tool (NOT task) to run sub-agents in parallel.
-- You are the ORCHESTRATOR. Sub-agents do the actual work.
-- Group independent work items into a single orchestrate_tool call for parallelism.
+- ALWAYS use orchestrate_tool for file operations. NEVER write files yourself directly.
+- You are the ORCHESTRATOR. You plan and delegate. Sub-agents do the actual work.
+- Group independent work items into a SINGLE orchestrate_tool call for maximum parallelism.
+- Each sub-agent task description must be detailed and self-contained.
 
 ## Tools
-- read_file: Read file content (always read before editing)
-- write_file: Create new files
-- edit_file: Modify existing files (targeted string replacement)
-- execute: Run shell commands (build, test, install packages, verify work)
-- git_tool: Git operations with built-in safety rules
-- web_search_tool: Search the web for documentation and solutions
-- fetch_url_tool: Fetch content from URLs
-- write_todos: Create and manage a todo list for planning — call this FIRST for complex tasks
-- orchestrate_tool: Run multiple sub-agents in PARALLEL — preferred over sequential task calls
-- task: Delegate a single sub-task to one sub-agent (use orchestrate_tool for multiple)
-- glob: Find files by pattern
-- grep: Search file contents
-- ls: List directory contents
+- write_todos: Create a todo list — MUST be your FIRST tool call
+- orchestrate_tool: Run sub-agents in PARALLEL — MUST be your SECOND tool call
+- read_file / glob / grep / ls: Read-only exploration (use before delegating)
+- execute: Run shell commands (ONLY for verification in Step 3)
+- git_tool: Git operations
+- web_search_tool / fetch_url_tool: Web research
 
-## Sub-agents (via task tool)
-When delegating, provide a detailed description of what the sub-agent should do:
-- "coder": Write and modify code, create project files, run tests
-- "planner": Analyze complex requests and create structured plans
-- "explorer": Read-only codebase exploration and analysis
+## Sub-agent types (for orchestrate_tool)
+- "coder": Write/modify code, create files, run build commands
+- "explorer": Read-only codebase analysis
 - "researcher": Web research and documentation lookup
-- "reviewer": Code review and quality analysis (read-only)
+- "reviewer": Code review (read-only)
+- "planner": Task breakdown and planning
+
+## IMPORTANT: You do NOT write files yourself.
+You call write_todos, then orchestrate_tool. That's your job.
+Do NOT call write_file or edit_file directly. Delegate to coder sub-agents.
 
 ## Rules
 - Never commit without explicit user request
@@ -115,7 +115,7 @@ SUBAGENT_CONFIGS: list[SubAgent] = [
             "You are a researcher. Use web_search_tool and fetch_url_tool to gather information. "
             "Summarize findings clearly with relevant URLs and code examples."
         ),
-        "tools": [web_search_tool, fetch_url_tool],
+        "tools": [],  # populated at runtime by _build_orchestrator_subagents
     },
     {
         "name": "reviewer",
@@ -177,7 +177,9 @@ def create_atom_agent(config: AgentConfig):
 
     # Custom tools + orchestrate
     from atom.orchestrator import orchestrate_tool
-    custom_tools = [git_tool, web_search_tool, fetch_url_tool, ask_user_tool, orchestrate_tool]
+    custom_tools = [git_tool, fetch_url_tool, ask_user_tool, orchestrate_tool]
+    if os.environ.get("TAVILY_API_KEY"):
+        custom_tools.append(web_search_tool)
 
     # HITL config
     if config.permissions.mode == "auto_approve":
@@ -192,12 +194,18 @@ def create_atom_agent(config: AgentConfig):
     # Build custom middleware stack
     custom_middleware, auto_dream = _build_custom_middleware(config, store)
 
+    # Discover skill paths
+    from atom.skills import SkillManager
+    skill_mgr = SkillManager(config.project_root)
+    skill_paths = skill_mgr.get_skill_paths() or None
+
     agent = create_deep_agent(
         name="atom",
         model=model,
         tools=custom_tools,
         system_prompt=system_prompt,
-        subagents=SUBAGENT_CONFIGS,
+        skills=skill_paths,
+        # subagents are managed by orchestrate_tool (parallel), not framework's task tool (sequential)
         backend=LocalShellBackend(
             root_dir=config.project_root,
             virtual_mode=False,
@@ -213,31 +221,28 @@ def create_atom_agent(config: AgentConfig):
 
 
 def _build_orchestrator_subagents(model, config: AgentConfig):
-    """Pre-build subagent graphs and register them with the orchestrator."""
-    from atom.orchestrator import register_subagents
+    """Register serializable subagent configs for multiprocessing orchestrator.
 
-    subagent_instances = {}
+    Instead of pre-building graphs (not pickle-safe), we pass serializable
+    configs to the orchestrator. Each child process rebuilds its own graph.
+    """
+    from atom.orchestrator import register_subagent_configs
+
+    # Extract serializable config: name + system_prompt only
+    serializable_configs = []
     for cfg in SUBAGENT_CONFIGS:
-        name = cfg["name"]
-        extra_tools = cfg.get("tools", [])
-        subagent = create_deep_agent(
-            model=model,
-            system_prompt=cfg["system_prompt"],
-            tools=extra_tools,
-            backend=LocalShellBackend(
-                root_dir=config.project_root,
-                virtual_mode=False,
-                inherit_env=True,
-            ),
-            checkpointer=MemorySaver(),
-            middleware=[
-                SanitizeMiddleware(),
-                StallDetectorMiddleware(max_empty_turns=2),
-            ],
-        )
-        subagent_instances[name] = subagent
+        serializable_configs.append({
+            "name": cfg["name"],
+            "description": cfg.get("description", ""),
+            "system_prompt": cfg["system_prompt"],
+        })
 
-    register_subagents(subagent_instances)
+    register_subagent_configs(
+        configs=serializable_configs,
+        model_name=config.model,
+        provider=config.provider,
+        project_root=config.project_root,
+    )
 
 
 def _build_custom_middleware(config: AgentConfig, store):
@@ -278,8 +283,6 @@ def _resolve_model(model_name: str, provider: str = "auto"):
         model_name: Model name/identifier.
         provider: "auto" to detect from env, or explicit provider name.
     """
-    load_dotenv()
-
     providers = {
         "openrouter": _make_openrouter,
         "anthropic": _make_anthropic,

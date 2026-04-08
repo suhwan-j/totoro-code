@@ -13,18 +13,27 @@ from prompt_toolkit.styles import Style
 
 # Mode definitions
 MODES = ["default", "auto-approve", "plan-only"]
-MODE_LABELS = {
-    "default": "\033[1;32mdefault\033[0m",
-    "auto-approve": "\033[1;33mauto-approve\033[0m",
-    "plan-only": "\033[1;36mplan-only\033[0m",
-}
 MODE_ICONS = {
     "default": "◆",
     "auto-approve": "⚡",
     "plan-only": "📋",
 }
+# bg color, fg on bg, line color, line char
+MODE_THEME = {
+    "default":       ("\033[42m\033[1;30m", "\033[0;32m", "─"),       # green bg, green line
+    "auto-approve":  ("\033[43m\033[1;30m", "\033[0;33m", "━"),       # yellow bg, yellow bold line
+    "plan-only":     ("\033[46m\033[1;30m", "\033[0;36m", "┄"),       # cyan bg, cyan dashed line
+}
+MODE_LABELS = {
+    "default": "\033[1;32mdefault\033[0m",
+    "auto-approve": "\033[1;33mauto-approve\033[0m",
+    "plan-only": "\033[1;36mplan-only\033[0m",
+}
+_DIM = "\033[0;90m"
+_RESET = "\033[0m"
+_BOLD = "\033[1m"
 
-# prompt_toolkit style for the completion dropdown
+# prompt_toolkit style
 _STYLE = Style.from_dict({
     "completion-menu":                "bg:#1a1a2e #e0e0e0",
     "completion-menu.completion":     "bg:#1a1a2e #e0e0e0",
@@ -33,6 +42,9 @@ _STYLE = Style.from_dict({
     "completion-menu.meta.current":   "bg:#16213e #aaddff",
     "scrollbar.background":           "bg:#1a1a2e",
     "scrollbar.button":               "bg:#333355",
+    # Transparent background for bottom toolbar
+    "bottom-toolbar":                 "noreverse",
+    "bottom-toolbar.text":            "noreverse",
 })
 
 
@@ -72,12 +84,13 @@ class InputHandler:
 
         # Key bindings
         self._bindings = KeyBindings()
+        handler_ref = self
 
         @self._bindings.add("s-tab")
         def _shift_tab(event):
-            """Shift+Tab: cycle mode by injecting /mode command."""
-            event.current_buffer.text = "/mode"
-            event.current_buffer.validate_and_handle()
+            """Shift+Tab: cycle mode in-place, redraw prompt."""
+            handler_ref.cycle_mode()
+            event.app.invalidate()  # force redraw with new toolbar/prompt
 
         self._session = PromptSession(
             completer=SlashCompleter(),
@@ -85,6 +98,7 @@ class InputHandler:
             style=_STYLE,
             complete_while_typing=True,
             complete_in_thread=True,
+            reserve_space_for_menu=0,
         )
 
     def cycle_mode(self) -> str:
@@ -93,16 +107,42 @@ class InputHandler:
         self.mode = MODES[(idx + 1) % len(MODES)]
         return self.mode
 
+    def mode_top_bar(self) -> str:
+        """Top bar:  ──────────── DEFAULT ──  with colored bg label and themed line."""
+        import shutil
+        width = min(shutil.get_terminal_size().columns, 120)
+        bg_style, line_color, line_char = MODE_THEME.get(self.mode, ("\033[47m\033[1;30m", _DIM, "─"))
+        label = f" {self.mode.upper()} "
+        # ─────────── DEFAULT ──
+        tag_len = len(label) + 4  # " " + label + " " + "──"
+        pad = width - tag_len
+        return f"{line_color}{line_char * max(0, pad)}{_RESET} {bg_style}{label}{_RESET} {line_color}{line_char * 2}{_RESET}"
+
+    def mode_bottom_bar(self) -> str:
+        """Bottom bar: themed separator line."""
+        import shutil
+        width = min(shutil.get_terminal_size().columns, 120)
+        _, line_color, line_char = MODE_THEME.get(self.mode, ("\033[47m\033[1;30m", _DIM, "─"))
+        return f"{line_color}{line_char * width}{_RESET}"
+
     @property
     def prompt_html(self) -> HTML:
-        """Build prompt as HTML for prompt_toolkit."""
+        """Build prompt as HTML with top bar included for live mode switching."""
+        import shutil
+        width = min(shutil.get_terminal_size().columns, 120)
+        _, _, line_char = MODE_THEME.get(self.mode, ("\033[47m\033[1;30m", _DIM, "─"))
+        label = self.mode.upper()
+        line_fg = {"default": "ansigreen", "auto-approve": "ansiyellow", "plan-only": "ansicyan"}.get(self.mode, "ansigray")
         icon = MODE_ICONS.get(self.mode, "◆")
-        if self.mode == "default":
-            return HTML(f"<style fg='ansigreen' bold='true'>{icon} &gt; </style>")
-        label_text = self.mode
+
+        pad = width - len(label) - 6
+        bar = line_char * max(0, pad)
+
         return HTML(
-            f"<style fg='ansigreen' bold='true'>{icon} "
-            f"[<style fg='ansiyellow'>{label_text}</style>] &gt; </style>"
+            f'<style fg="{line_fg}">{bar}</style>'
+            f' <style bg="{line_fg}" fg="ansiblack" bold="true"> {label} </style>'
+            f' <style fg="{line_fg}">{line_char}{line_char}</style>\n'
+            f'<style fg="{line_fg}" bold="true">{icon} &gt; </style>'
         )
 
     @property
@@ -111,8 +151,9 @@ class InputHandler:
         icon = MODE_ICONS.get(self.mode, "◆")
         if self.mode == "default":
             return f"\033[1;32m{icon} > \033[0m"
-        label = MODE_LABELS.get(self.mode, self.mode)
-        return f"\033[1;32m{icon} [{label}\033[1;32m] > \033[0m"
+        if self.mode == "auto-approve":
+            return f"\033[1;33m{icon} > \033[0m"
+        return f"\033[1;36m{icon} > \033[0m"
 
     @property
     def is_auto_approve(self) -> bool:
@@ -122,6 +163,21 @@ class InputHandler:
     def is_plan_only(self) -> bool:
         return self.mode == "plan-only"
 
+    def _bottom_toolbar(self):
+        """Dim line + next-mode hint (always visible during input)."""
+        import shutil
+        width = min(shutil.get_terminal_size().columns, 120)
+        idx = MODES.index(self.mode)
+        next_mode = MODES[(idx + 1) % len(MODES)]
+        next_fg = {"default": "ansigreen", "auto-approve": "ansiyellow", "plan-only": "ansicyan"}.get(next_mode, "ansigray")
+        bar = '─' * width
+        return HTML(
+            f'<style fg="ansigray">{bar}</style>\n'
+            f'<style fg="ansigray">⏵⏵ </style>'
+            f'<style fg="{next_fg}" bold="true">{next_mode}</style>'
+            f'<style fg="ansigray"> on (shift+tab)</style>'
+        )
+
     def read_input(self) -> str | None:
         """Read a line of input with inline slash-command autocomplete.
 
@@ -129,7 +185,11 @@ class InputHandler:
             The user's input string, or None on EOF/interrupt.
         """
         try:
-            return self._session.prompt(self.prompt_html).strip()
+            return self._session.prompt(
+                lambda: self.prompt_html,
+                bottom_toolbar=self._bottom_toolbar,
+                refresh_interval=0.5,
+            ).strip()
         except (EOFError, KeyboardInterrupt):
             return None
 

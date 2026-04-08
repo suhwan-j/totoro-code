@@ -4,6 +4,7 @@ Thread-safe: multiple subagent workers can update concurrently.
 """
 import sys
 import time
+import random
 import shutil
 import threading
 from dataclasses import dataclass, field
@@ -24,20 +25,48 @@ _MAGENTA = f"{_ESC}0;35m"
 _RED = f"{_ESC}1;31m"
 _WHITE = f"{_ESC}0;37m"
 
-_H = "─"
-_V = "│"
-_TL = "╭"
-_TR = "╮"
-_BL = "╰"
-_BR = "╯"
-_LT = "├"
-_RT = "┤"
-
 _ICON_DONE = "✓"
 _ICON_ACTIVE = "▸"
 _ICON_PENDING = "○"
 _ICON_AGENT = "◈"
 _ICON_TOOL = "⚡"
+
+# ─── Spinner frames for thinking animation ───
+_SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+# ─── Fun agent names ───
+_AGENT_NAMES = [
+    "Nova", "Pixel", "Spark", "Nimbus", "Echo",
+    "Quasar", "Bolt", "Orbit", "Flux", "Comet",
+    "Prism", "Vortex", "Nebula", "Helix", "Drift",
+]
+
+# ─── Fun subagent names mapped by type ───
+_SUBAGENT_NAMES = {
+    "coder":      ["Bytesmith", "Syntex", "Forger", "Weaver", "Cipher"],
+    "researcher": ["Scout", "Seeker", "Oracle", "Lens", "Probe"],
+    "explorer":   ["Pathfinder", "Rover", "Compass", "Atlas", "Trailblazer"],
+    "reviewer":   ["Sentinel", "Warden", "Inspector", "Aegis", "Guardian"],
+    "planner":    ["Architect", "Blueprint", "Strategist", "Navigator", "Compass"],
+}
+
+_used_names: set = set()
+
+
+def _pick_agent_name() -> str:
+    """Pick a random fun name for the main agent (per session)."""
+    return random.choice(_AGENT_NAMES)
+
+
+def _pick_subagent_name(agent_type: str) -> str:
+    """Pick a fun name for a subagent based on its type."""
+    names = _SUBAGENT_NAMES.get(agent_type, _AGENT_NAMES)
+    available = [n for n in names if n not in _used_names]
+    if not available:
+        available = names
+    name = random.choice(available)
+    _used_names.add(name)
+    return name
 
 
 @dataclass
@@ -72,6 +101,11 @@ class StatusTracker:
         self.activity_log: list[str] = []  # Recent file operations
         self._max_log: int = 6
         self._dirty: bool = True  # Only re-render when state changes
+        self._pane_manager = None  # Set by CLI for detailed subagent view
+        self.agent_name: str = _pick_agent_name()
+        self._spinner_idx: int = 0
+        self._subagent_display_names: dict[str, str] = {}  # label -> fun name
+        self._got_ai_text: bool = False  # True once AI starts outputting text
 
     # ─── Event handlers (thread-safe) ───
 
@@ -135,6 +169,10 @@ class StatusTracker:
 
     def on_subagent_start(self, name: str, description: str):
         with self._lock:
+            # Assign a fun display name based on agent type
+            agent_type = name.rsplit("-", 1)[0] if "-" in name else name
+            display_name = _pick_subagent_name(agent_type)
+            self._subagent_display_names[name] = display_name
             self.active_subagents[name] = SubagentInfo(
                 name=name,
                 description=description[:100],
@@ -198,14 +236,29 @@ class StatusTracker:
         if not self._panel_enabled:
             return
         with self._lock:
-            if not self._dirty:
+            # Once AI text has started, stop showing the thinking indicator
+            if self._got_ai_text and not self.active_subagents and not self.todos:
+                if self._last_panel_lines > 0:
+                    self._clear_previous()
+                    self._last_panel_lines = 0
                 return
-            self._dirty = False
+
+            # Always advance spinner for animation
+            self._spinner_idx = (self._spinner_idx + 1) % len(_SPINNER)
+            self._dirty = True  # spinner always changes
 
             self._clear_previous()
-            lines = self._build_panel()
+
+            # Simple thinking animation when no tools/plan/subagents
+            has_meaningful_status = (
+                self.tool_count > 0 or self.todos or self.active_subagents
+            )
+            if not has_meaningful_status:
+                lines = self._build_thinking_line()
+            else:
+                lines = self._build_panel()
+
             output = "\n".join(lines)
-            # Use stdout (same stream as AI text) so ANSI cursor math stays consistent
             sys.stdout.flush()
             try:
                 sys.stdout.write(output + "\n")
@@ -224,16 +277,16 @@ class StatusTracker:
             sys.stdout.write(f"{_ESC}{self._last_panel_lines}A")
             sys.stdout.flush()
 
+    def _build_thinking_line(self) -> list[str]:
+        """Minimal thinking indicator: spinning dot + agent name."""
+        spinner = _SPINNER[self._spinner_idx]
+        return [f"  {_CYAN}{spinner}{_RESET} {_DIM}{self.agent_name} is thinking...{_RESET}"]
+
     def _build_panel(self) -> list[str]:
-        width = min(shutil.get_terminal_size().columns - 2, 72)
+        width = min(shutil.get_terminal_size().columns - 2, 120)
         lines = []
 
         # ─── Header ───
-        title = f" {_ICON_AGENT} Atom Status "
-        pad = width - len(title) - 2
-        lines.append(f"{_DIM}{_TL}{_H}{_CYAN}{title}{_DIM}{_H * max(0, pad)}{_TR}{_RESET}")
-
-        # ─── Phase & Counters ───
         phase_color = _YELLOW if self.phase == "Planning" else _GREEN if self.phase == "Executing" else _DIM
         agent_count = len(self.active_subagents)
         done_count = sum(1 for t in self.todos if t.status == "completed")
@@ -245,70 +298,104 @@ class StatusTracker:
         counters.append(f"Tools: {self.tool_count}")
         if agent_count > 0:
             counters.append(f"Agents: {agent_count}")
+        counter_str = f" {_DIM}{' · '.join(counters)}{_RESET}"
 
-        counter_str = f"{_DIM}  {' · '.join(counters)}{_RESET}"
-        lines.append(f"{_DIM}{_V}{_RESET} {phase_color}{_BOLD}{self.phase}{_RESET}{counter_str}")
+        spinner = _SPINNER[self._spinner_idx]
+        lines.append(f"{_DIM}── {_CYAN}{spinner} {self.agent_name}{_RESET} {phase_color}{self.phase}{_RESET}{counter_str} {_DIM}{'─' * max(0, width - 40)}{_RESET}")
 
-        # ─── Plan Progress ───
+        # ─── Plan ───
         if self.todos:
-            lines.append(f"{_DIM}{_LT}{_H * 2} Plan {_H * max(0, width - 9)}{_RT}{_RESET}")
             if total_count > 0:
                 ratio = done_count / total_count
                 bar_width = min(20, width - 20)
                 filled = int(ratio * bar_width)
                 bar = f"{'█' * filled}{'░' * (bar_width - filled)}"
                 pct = int(ratio * 100)
-                lines.append(f"{_DIM}{_V}{_RESET}  {_GREEN}{bar}{_RESET} {pct}%")
+                lines.append(f"   {_GREEN}{bar}{_RESET} {pct}%")
 
             for todo in self.todos[:8]:
                 if todo.status == "completed":
                     icon = f"{_GREEN}{_ICON_DONE}{_RESET}"
-                    text = f"{_DIM}{todo.content[:width - 10]}{_RESET}"
+                    text = f"{_DIM}{todo.content[:width - 8]}{_RESET}"
                 elif todo.status == "in_progress":
                     icon = f"{_YELLOW}{_ICON_ACTIVE}{_RESET}"
-                    text = f"{_WHITE}{todo.content[:width - 10]}{_RESET}"
+                    text = f"{_WHITE}{todo.content[:width - 8]}{_RESET}"
                 else:
                     icon = f"{_DIM}{_ICON_PENDING}{_RESET}"
-                    text = f"{_DIM}{todo.content[:width - 10]}{_RESET}"
-                lines.append(f"{_DIM}{_V}{_RESET}  {icon} {text}")
+                    text = f"{_DIM}{todo.content[:width - 8]}{_RESET}"
+                lines.append(f"   {icon} {text}")
 
             if len(self.todos) > 8:
-                lines.append(f"{_DIM}{_V}  ... +{len(self.todos) - 8} more{_RESET}")
+                lines.append(f"   {_DIM}... +{len(self.todos) - 8} more{_RESET}")
 
-        # ─── Active Subagents (with their current tool) ───
+        # ─── Subagents (tree structure) ───
         if self.active_subagents:
-            lines.append(f"{_DIM}{_LT}{_H * 2} Subagents ({agent_count} active) {_H * max(0, width - 24)}{_RT}{_RESET}")
-            for name, info in list(self.active_subagents.items()):
+            # Collect pane data
+            pane_data = {}
+            if self._pane_manager:
+                for pane in self._pane_manager.get_panes():
+                    pane_data[pane.label] = pane
+
+            agent_list = list(self.active_subagents.items())
+            for idx, (name, info) in enumerate(agent_list):
+                is_last = idx == len(agent_list) - 1
+                pane = pane_data.get(name)
                 elapsed = time.time() - info.started_at
                 elapsed_str = f"{elapsed:.0f}s"
+                tool_count = pane.tool_count if pane else info.tool_count
+
+                # Status icon with spinner for active agents
+                if pane and pane.status == "done":
+                    s_icon = f"{_GREEN}{_ICON_DONE}{_RESET}"
+                elif pane and pane.status == "error":
+                    s_icon = f"{_RED}✗{_RESET}"
+                else:
+                    s_icon = f"{_MAGENTA}{_SPINNER[self._spinner_idx]}{_RESET}"
+
+                # Tree connector
+                connector = "└── " if is_last else "├── "
+                child_prefix = "    " if is_last else "│   "
+
+                # Use fun display name
+                display_name = self._subagent_display_names.get(name, name)
                 lines.append(
-                    f"{_DIM}{_V}{_RESET}  {_MAGENTA}{_ICON_AGENT} {name}{_RESET}"
-                    f" {_DIM}({elapsed_str}, {info.tool_count} tools){_RESET}"
+                    f"   {_DIM}{connector}{_RESET}{s_icon} {_BOLD}{display_name}{_RESET}"
+                    f" {_DIM}({name}){_RESET}"
+                    f"  {_DIM}{elapsed_str} · {tool_count} tools{_RESET}"
                 )
-                desc = info.description[:width - 8]
-                lines.append(f"{_DIM}{_V}{_RESET}    {desc}")
-                if info.current_tool:
-                    tool_display = info.current_tool[:width - 10]
-                    lines.append(f"{_DIM}{_V}{_RESET}    {_BLUE}{_ICON_TOOL} {tool_display}{_RESET}")
 
-        # ─── Current Tool (main agent) ───
+                # Recent activity from pane
+                if pane and pane.recent_lines:
+                    for line in pane.recent_lines[-3:]:
+                        display = sanitize_text(str(line))[:width - 12]
+                        lines.append(f"   {_DIM}{child_prefix}{_RESET}{display}")
+                else:
+                    desc = info.description[:width - 12]
+                    lines.append(f"   {_DIM}{child_prefix}{desc}{_RESET}")
+
+                # Current tool
+                if pane and pane.current_tool:
+                    lines.append(f"   {_DIM}{child_prefix}{_BLUE}{_ICON_TOOL} {pane.current_tool}{_RESET}")
+                elif info.current_tool:
+                    lines.append(f"   {_DIM}{child_prefix}{_BLUE}{_ICON_TOOL} {info.current_tool}{_RESET}")
+
+        # ─── Current Tool (main agent, no subagents) ───
         elif self.current_tool and self.current_tool not in ("write_todos", "task", "orchestrate_tool"):
-            lines.append(f"{_DIM}{_LT}{_H * 2} Active {_H * max(0, width - 11)}{_RT}{_RESET}")
-            lines.append(f"{_DIM}{_V}{_RESET}  {_BLUE}{_ICON_TOOL} {self.current_tool}{_RESET} {_DIM}{self.current_tool_args[:width - 15]}{_RESET}")
+            lines.append(f"   {_BLUE}{_ICON_TOOL} {self.current_tool}{_RESET} {_DIM}{self.current_tool_args[:width - 15]}{_RESET}")
 
-        # ─── Activity Log (file changes from subagents) ───
+        # ─── Activity Log ───
         if self.activity_log:
-            lines.append(f"{_DIM}{_LT}{_H * 2} Recent {_H * max(0, width - 11)}{_RT}{_RESET}")
+            lines.append(f"   {_DIM}── Recent {'─' * max(0, width - 14)}{_RESET}")
             for entry in self.activity_log[-self._max_log:]:
                 if entry.startswith("+"):
-                    lines.append(f"{_DIM}{_V}{_RESET}  {_GREEN}{entry[:width - 6]}{_RESET}")
+                    lines.append(f"   {_GREEN}{entry[:width - 6]}{_RESET}")
                 elif entry.startswith("~"):
-                    lines.append(f"{_DIM}{_V}{_RESET}  {_YELLOW}{entry[:width - 6]}{_RESET}")
+                    lines.append(f"   {_YELLOW}{entry[:width - 6]}{_RESET}")
                 else:
-                    lines.append(f"{_DIM}{_V}{_RESET}  {_DIM}{entry[:width - 6]}{_RESET}")
+                    lines.append(f"   {_DIM}{entry[:width - 6]}{_RESET}")
 
         # ─── Footer ───
-        lines.append(f"{_DIM}{_BL}{_H * (width - 2)}{_BR}{_RESET}")
+        lines.append(f"{_DIM}{'─' * width}{_RESET}")
         return lines
 
     def render_final_summary(self):
@@ -316,10 +403,14 @@ class StatusTracker:
             self._clear_previous()
             self._last_panel_lines = 0
 
-        width = min(shutil.get_terminal_size().columns - 2, 72)
-        done = sum(1 for t in self.todos if t.status == "completed")
+        # Only show summary when there's meaningful activity (plan or subagents)
         total = len(self.todos)
         agent_total = len(self.completed_subagents)
+        if total == 0 and agent_total == 0:
+            return
+
+        width = min(shutil.get_terminal_size().columns - 2, 120)
+        done = sum(1 for t in self.todos if t.status == "completed")
 
         parts = [f"Tools: {self.tool_count}"]
         if total > 0:
