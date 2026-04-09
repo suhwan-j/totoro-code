@@ -176,8 +176,8 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
 
     Flow: catbus → parse plan JSON → run execution agents → return all results.
     """
-    # Phase 1: Run catbus
-    plan_results = _run_parallel(catbus_tasks)
+    # Phase 1: Run catbus (suppress summary — will show combined at end)
+    plan_results = _run_parallel(catbus_tasks, suppress_summary=True)
 
     # Collect plan text and parse execution tasks
     execution_tasks = []
@@ -244,7 +244,7 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
 
 # ─── Parallel execution engine (multiprocessing) ───
 
-def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
+def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str, SubagentResult | str]:
     """Execute tasks in parallel using multiprocessing + curses split-pane."""
     import curses as _curses
     from totoro.tui import SplitPaneTUI
@@ -380,12 +380,13 @@ def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
     except Exception:
         pass
 
-    # Print summary after curses exits
+    # Print summary after curses exits (skip if auto-dispatch will call again)
     if _pane_manager:
-        summary = _pane_manager.get_summary()
-        if summary:
-            from totoro.diff import safe_print
-            safe_print(summary)
+        if not suppress_summary:
+            summary = _pane_manager.get_summary()
+            if summary:
+                from totoro.diff import safe_print
+                safe_print(summary)
         _pane_manager.clear()
 
     # Keep panel disabled — the main agent will continue processing
