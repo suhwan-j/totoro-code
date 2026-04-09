@@ -7,7 +7,7 @@ import urllib.request
 from pathlib import Path
 from dataclasses import dataclass
 
-from atom.colors import (
+from totoro.colors import (
     DIM as _DIM, BOLD as _BOLD, AMBER_LT as _GREEN,
     BLUE as _CYAN, AMBER as _YELLOW, COPPER as _RED, RESET as _RESET,
 )
@@ -22,16 +22,16 @@ class SkillInfo:
 
 
 class SkillManager:
-    """Manages skills in built-in/skills/, ~/.atom/skills/ (global) and .atom/skills/ (project).
+    """Manages skills in built-in/skills/, ~/.totoro/skills/ (global) and .totoro/skills/ (project).
 
     Precedence (lowest → highest): built-in → global → project.
     """
 
     def __init__(self, project_root: str):
-        # Built-in skills ship with the atom package
+        # Built-in skills ship with the totoro package
         self.builtin_dir = Path(__file__).resolve().parent.parent / "built-in" / "skills"
-        self.global_dir = Path.home() / ".atom" / "skills"
-        self.project_dir = Path(project_root) / ".atom" / "skills"
+        self.global_dir = Path.home() / ".totoro" / "skills"
+        self.project_dir = Path(project_root) / ".totoro" / "skills"
 
     def list_skills(self) -> list[SkillInfo]:
         """List all installed skills (built-in + global + project)."""
@@ -99,7 +99,7 @@ description: {description}
             return f"Cannot resolve source: {source}", None
 
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "atom-code/1.0"})
+            req = urllib.request.Request(url, headers={"User-Agent": "totoro-code/1.0"})
             with urllib.request.urlopen(req, timeout=15) as resp:
                 content = resp.read().decode("utf-8")
         except Exception as e:
@@ -149,7 +149,7 @@ description: {description}
         if global_skills:
             if builtin_skills:
                 lines.append("")
-            lines.append(f"  {_DIM}~/.atom/skills/{_RESET}")
+            lines.append(f"  {_DIM}~/.totoro/skills/{_RESET}")
             for i, s in enumerate(global_skills):
                 is_last = i == len(global_skills) - 1
                 connector = "└── " if is_last else "├── "
@@ -158,7 +158,7 @@ description: {description}
         if project_skills:
             if builtin_skills or global_skills:
                 lines.append("")
-            lines.append(f"  {_DIM}.atom/skills/{_RESET}")
+            lines.append(f"  {_DIM}.totoro/skills/{_RESET}")
             for i, s in enumerate(project_skills):
                 is_last = i == len(project_skills) - 1
                 connector = "└── " if is_last else "├── "
@@ -288,7 +288,7 @@ description: {description}
                 if download_url:
                     try:
                         req = urllib.request.Request(
-                            download_url, headers={"User-Agent": "atom-code/1.0"})
+                            download_url, headers={"User-Agent": "totoro-code/1.0"})
                         with urllib.request.urlopen(req, timeout=15) as resp:
                             data = resp.read()
                         file_path = dest / name
@@ -311,7 +311,7 @@ description: {description}
     def _github_api_get(self, url: str):
         """GET from GitHub API and return parsed JSON."""
         req = urllib.request.Request(url, headers={
-            "User-Agent": "atom-code/1.0",
+            "User-Agent": "totoro-code/1.0",
             "Accept": "application/vnd.github.v3+json",
         })
         # Use token if available

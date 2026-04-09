@@ -10,7 +10,7 @@ import tty
 import termios
 import threading
 
-from atom.colors import DIM as _DIM, RESET as _RESET, BLUE, AMBER, IVORY
+from totoro.colors import DIM as _DIM, RESET as _RESET, BLUE, AMBER, IVORY
 
 
 class HotkeyListener:

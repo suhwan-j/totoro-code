@@ -137,7 +137,7 @@ class AutoDreamExtractor:
         """Format memories for user display."""
         if not self._memories:
             return "No memories extracted yet."
-        from atom.colors import BOLD, RESET
+        from totoro.colors import BOLD, RESET
         lines = [f"{BOLD}Extracted Memories:{RESET}"]
         for i, m in enumerate(self._memories, 1):
             mtype = m.get("type", "unknown")

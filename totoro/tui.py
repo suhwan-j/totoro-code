@@ -11,8 +11,8 @@ import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from atom.status import StatusTracker
-    from atom.pane import PaneManager
+    from totoro.status import StatusTracker
+    from totoro.pane import PaneManager
 
 
 # curses color pair IDs (mapped to palette)
@@ -180,7 +180,7 @@ class SplitPaneTUI:
         row = 0
         # Header
         row = self._waddstr(win, row, 0, "── ", _PAIR_DIM)
-        self._waddstr(win, 0, 3, "◈ Atom ", _PAIR_CYAN, bold=True)
+        self._waddstr(win, 0, 3, "◈ Totoro ", _PAIR_CYAN, bold=True)
         phase = self.tracker.phase
         phase_pair = _PAIR_YELLOW if phase == "Planning" else _PAIR_GREEN if phase == "Executing" else _PAIR_DIM
         self._waddstr(win, 0, 10, phase, phase_pair, bold=True)

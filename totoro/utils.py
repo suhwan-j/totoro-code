@@ -1,4 +1,4 @@
-"""Shared utilities for Atom."""
+"""Shared utilities for Totoro."""
 import re
 
 # Matches Unicode surrogate characters (U+D800 to U+DFFF)

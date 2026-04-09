@@ -1,6 +1,6 @@
 """Slash command registry and handler."""
 import time
-from atom.colors import (
+from totoro.colors import (
     RESET as _R, BOLD as _B, DIM as _D,
     BLUE as _BL, AMBER as _AM, AMBER_LT as _AL,
     COPPER as _CP, BODY as _BD, SECONDARY as _SC,
@@ -90,7 +90,7 @@ def handle_slash_command(user_input: str, agent, invoke_config: dict) -> str | N
 
 
 def _cmd_help(args, agent, config) -> str:
-    from atom.input import format_mode_help
+    from totoro.input import format_mode_help
     mode_help = format_mode_help()
     return f"""{_B}Available commands:{_R}
   /help              Show this help message
@@ -127,7 +127,7 @@ def _cmd_new(args, agent, config) -> str:
 
 
 def _cmd_model(args, agent, config) -> str:
-    from atom.config.setup import _PROVIDER_MODELS
+    from totoro.config.setup import _PROVIDER_MODELS
     model_name = _agent_config.model if _agent_config else "unknown"
     provider = _agent_config.provider if _agent_config else "unknown"
 
@@ -310,7 +310,7 @@ def _cmd_compact(args, agent, config) -> str:
         state = agent.get_state(config)
         if state and state.values:
             messages = state.values.get("messages", [])
-            from atom.layers.context_compaction import ContextCompactor
+            from totoro.layers.context_compaction import ContextCompactor
             compactor = ContextCompactor()
             # Force compaction by using a low threshold
             total_chars = sum(len(getattr(m, "content", str(m)) or "") for m in messages)

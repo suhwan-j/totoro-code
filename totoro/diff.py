@@ -3,10 +3,10 @@
 import os
 import sys
 
-from atom.utils import sanitize_text
+from totoro.utils import sanitize_text
 
 # ANSI colors (palette-based)
-from atom.colors import DIM as _DIM, AMBER_LT as _GREEN, COPPER as _RED, BLUE as _CYAN, RESET as _RESET
+from totoro.colors import DIM as _DIM, AMBER_LT as _GREEN, COPPER as _RED, BLUE as _CYAN, RESET as _RESET
 
 
 def find_line_number(file_path: str, search_text: str) -> int | None:

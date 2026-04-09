@@ -1,4 +1,4 @@
-"""Atom agent factory — wraps create_deep_agent()"""
+"""Totoro agent factory — wraps create_deep_agent()"""
 import os
 from pathlib import Path
 from datetime import datetime
@@ -9,15 +9,15 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.store.memory import InMemoryStore
 
-from atom.tools import git_tool, web_search_tool, fetch_url_tool, ask_user_tool
-from atom.config.schema import AgentConfig
-from atom.core.models import create_lightweight_model
-from atom.layers.sanitize import SanitizeMiddleware
-from atom.layers.stall_detector import StallDetectorMiddleware
-from atom.layers.auto_dream import AutoDreamExtractor, AutoDreamMiddleware
+from totoro.tools import git_tool, web_search_tool, fetch_url_tool, ask_user_tool
+from totoro.config.schema import AgentConfig
+from totoro.core.models import create_lightweight_model
+from totoro.layers.sanitize import SanitizeMiddleware
+from totoro.layers.stall_detector import StallDetectorMiddleware
+from totoro.layers.auto_dream import AutoDreamExtractor, AutoDreamMiddleware
 
 
-CORE_SYSTEM_PROMPT = """You are Atom, an advanced CLI coding agent. You help users with software development tasks
+CORE_SYSTEM_PROMPT = """You are Totoro, an advanced CLI coding agent. You help users with software development tasks
 by reading, writing, and editing code, running commands, searching the web,
 and managing git repositories.
 
@@ -66,12 +66,12 @@ CRITICAL RULES:
 - web_search_tool / fetch_url_tool: Web research
 
 ## Sub-agents (for orchestrate_tool)
-Each task spawns an independent Atom agent with full capabilities (file I/O, shell, web search, skills).
+Each task spawns an independent Totoro agent with full capabilities (file I/O, shell, web search, skills).
 No need to specify a type — just describe the task clearly and self-contained.
 
 ## IMPORTANT: You do NOT write files yourself.
 You call write_todos, then orchestrate_tool. That's your job.
-Do NOT call write_file or edit_file directly. Delegate to Atom sub-agents.
+Do NOT call write_file or edit_file directly. Delegate to Totoro sub-agents.
 
 ## Rules
 - Never commit without explicit user request
@@ -138,13 +138,13 @@ SUBAGENT_CONFIGS: list[SubAgent] = [
 
 
 def _create_checkpointer():
-    """Create a SqliteSaver checkpointer at ~/.atom/checkpoints.db.
+    """Create a SqliteSaver checkpointer at ~/.totoro/checkpoints.db.
 
     Falls back to MemorySaver if SQLite setup fails.
     """
     try:
         import sqlite3
-        db_dir = Path.home() / ".atom"
+        db_dir = Path.home() / ".totoro"
         db_dir.mkdir(parents=True, exist_ok=True)
         db_path = db_dir / "checkpoints.db"
         conn = sqlite3.connect(str(db_path), check_same_thread=False)
@@ -153,13 +153,13 @@ def _create_checkpointer():
         return saver
     except Exception as e:
         import sys
-        from atom.colors import DIM, RESET
+        from totoro.colors import DIM, RESET
         print(f"{DIM}  [warn] SQLite checkpointer failed ({e}), using in-memory{RESET}", file=sys.stderr)
         return MemorySaver()
 
 
-def create_atom_agent(config: AgentConfig):
-    """Create the Atom agent wrapping create_deep_agent().
+def create_totoro_agent(config: AgentConfig):
+    """Create the Totoro agent wrapping create_deep_agent().
 
     Returns:
         tuple: (agent, checkpointer, store, auto_dream_extractor)
@@ -174,7 +174,7 @@ def create_atom_agent(config: AgentConfig):
     _build_orchestrator_subagents(model, config)
 
     # Custom tools + orchestrate
-    from atom.orchestrator import orchestrate_tool
+    from totoro.orchestrator import orchestrate_tool
     custom_tools = [git_tool, fetch_url_tool, ask_user_tool, orchestrate_tool]
     if os.environ.get("TAVILY_API_KEY"):
         custom_tools.append(web_search_tool)
@@ -193,12 +193,12 @@ def create_atom_agent(config: AgentConfig):
     custom_middleware, auto_dream = _build_custom_middleware(config, store)
 
     # Discover skill paths
-    from atom.skills import SkillManager
+    from totoro.skills import SkillManager
     skill_mgr = SkillManager(config.project_root)
     skill_paths = skill_mgr.get_skill_paths() or None
 
     agent = create_deep_agent(
-        name="atom",
+        name="totoro",
         model=model,
         tools=custom_tools,
         system_prompt=system_prompt,
@@ -224,7 +224,7 @@ def _build_orchestrator_subagents(model, config: AgentConfig):
     Instead of pre-building graphs (not pickle-safe), we pass serializable
     configs to the orchestrator. Each child process rebuilds its own graph.
     """
-    from atom.orchestrator import register_subagent_configs
+    from totoro.orchestrator import register_subagent_configs
 
     # Extract serializable config: name + system_prompt only
     serializable_configs = []
@@ -245,7 +245,7 @@ def _build_orchestrator_subagents(model, config: AgentConfig):
 
 
 def _build_custom_middleware(config: AgentConfig, store):
-    """Build custom middleware stack for Atom.
+    """Build custom middleware stack for Totoro.
 
     Returns:
         tuple: (middleware_list, auto_dream_extractor)

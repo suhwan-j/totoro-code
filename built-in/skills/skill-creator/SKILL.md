@@ -5,19 +5,19 @@ description: "Guide for creating effective skills that extend agent capabilities
 
 # Skill Creator
 
-## Skill Location for Atom
+## Skill Location for Totoro
 
-Atom loads skills from three sources (lowest to highest precedence):
+Totoro loads skills from three sources (lowest to highest precedence):
 
 | # | Directory | Scope | Notes |
 |---|-----------|-------|-------|
-| 0 | `built-in/skills/` | Built-in | Ships with Atom |
-| 1 | `~/.atom/skills/` | User (global) | Shared across all projects |
-| 2 | `.atom/skills/` | Project | Project-specific skills |
+| 0 | `built-in/skills/` | Built-in | Ships with Totoro |
+| 1 | `~/.totoro/skills/` | User (global) | Shared across all projects |
+| 2 | `.totoro/skills/` | Project | Project-specific skills |
 
 When two directories contain a skill with the same name, the higher-precedence version wins.
 
-## Anatomy of a Skill
+## Antotoroy of a Skill
 
 ```
 skill-name/
@@ -73,7 +73,7 @@ For each example, identify what scripts, references, or assets would help when e
 /skill add <skill-name>
 
 # Or manually create directory
-mkdir -p .atom/skills/<skill-name>
+mkdir -p .totoro/skills/<skill-name>
 # Then create SKILL.md with frontmatter
 ```
 

@@ -2,7 +2,7 @@ import os
 import sys
 import json
 from pathlib import Path
-from atom.config.schema import AgentConfig
+from totoro.config.schema import AgentConfig
 
 
 def load_config(cli_overrides: dict | None = None, project_root: str | None = None) -> AgentConfig:
@@ -10,14 +10,14 @@ def load_config(cli_overrides: dict | None = None, project_root: str | None = No
     config_dict = {}
 
     # User global
-    user_path = Path.home() / ".atom" / "settings.json"
+    user_path = Path.home() / ".totoro" / "settings.json"
     if user_path.exists():
         with open(user_path) as f:
             config_dict.update(json.load(f))
 
     # Project
     root = Path(project_root or os.getcwd())
-    proj_path = root / ".atom" / "settings.json"
+    proj_path = root / ".totoro" / "settings.json"
     if proj_path.exists():
         with open(proj_path) as f:
             proj_data = json.load(f)
@@ -45,7 +45,7 @@ def load_config(cli_overrides: dict | None = None, project_root: str | None = No
 
 def ensure_api_keys(force_setup: bool = False):
     """Verify required API keys exist. Runs setup wizard if needed."""
-    from atom.config.setup import load_provider_settings, inject_env_from_settings, run_setup_wizard
+    from totoro.config.setup import load_provider_settings, inject_env_from_settings, run_setup_wizard
 
     project_root = Path(os.getcwd())
 
@@ -55,7 +55,7 @@ def ensure_api_keys(force_setup: bool = False):
         inject_env_from_settings(settings)
         return
 
-    # 2. Try .atom/settings.json
+    # 2. Try .totoro/settings.json
     settings = load_provider_settings(project_root)
     if settings:
         inject_env_from_settings(settings)
@@ -68,5 +68,5 @@ def ensure_api_keys(force_setup: bool = False):
         return
 
     print("Error: No API key configured.")
-    print("Run `atom --setup` interactively to configure, or create .atom/settings.json.")
+    print("Run `totoro --setup` interactively to configure, or create .totoro/settings.json.")
     raise SystemExit(1)

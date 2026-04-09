@@ -1,5 +1,5 @@
 """Session restore — handles resuming from checkpointed state."""
-from atom.colors import AMBER_LT, AMBER, COPPER, RESET
+from totoro.colors import AMBER_LT, AMBER, COPPER, RESET
 
 
 def restore_session(agent, session_id: str, session_manager=None) -> dict | None:

@@ -1,4 +1,4 @@
-# Atom: Advanced CLI Coding Agent
+# Totoro: Advanced CLI Coding Agent
 
 ```
         .     *    .        .   *     .
@@ -74,7 +74,7 @@ API 키 우선순위: `OPENROUTER_API_KEY` > `ANTHROPIC_API_KEY` > `OPENAI_API_K
 ### 대화형 모드 (기본)
 
 ```bash
-atom
+totoro
 ```
 
 터미널에서 에이전트와 대화하며 작업합니다. 도구 실행 시 승인을 요청합니다.
@@ -82,15 +82,15 @@ atom
 ### 비대화형 모드
 
 ```bash
-atom -n "버그를 찾아서 수정해줘"
-atom -n "pyproject.toml을 읽고 의존성 목록을 알려줘"
+totoro -n "버그를 찾아서 수정해줘"
+totoro -n "pyproject.toml을 읽고 의존성 목록을 알려줘"
 ```
 
 ### 위치 인수로 작업 전달
 
 ```bash
-atom fix the login bug
-atom "add error handling to the API endpoint"
+totoro fix the login bug
+totoro "add error handling to the API endpoint"
 ```
 
 ## CLI 옵션
@@ -109,19 +109,19 @@ atom "add error handling to the API endpoint"
 
 ```bash
 # 기본 대화형 모드
-atom
+totoro
 
 # 자동 승인으로 빠르게 작업
-atom --auto-approve -n "테스트 실행하고 결과 알려줘"
+totoro --auto-approve -n "테스트 실행하고 결과 알려줘"
 
 # 모델 + 프로바이더 지정
-atom --model Qwen/Qwen3-32B --provider vllm
+totoro --model Qwen/Qwen3-32B --provider vllm
 
 # 이전 세션 이어서 작업
-atom --resume session-1234567890
+totoro --resume session-1234567890
 
 # 저장된 세션 목록 보기
-atom --list-sessions
+totoro --list-sessions
 ```
 
 ## 슬래시 커맨드
@@ -160,7 +160,7 @@ atom --list-sessions
 
 ### 세션 관리
 
-세션 상태는 `~/.atom/checkpoints.db` (SQLite)에 영구 저장됩니다.
+세션 상태는 `~/.totoro/checkpoints.db` (SQLite)에 영구 저장됩니다.
 
 ```
 ◆ > /sessions
@@ -217,7 +217,7 @@ New session: session-1775544000 — implement search feature
 실행 중 실시간 대시보드가 표시됩니다:
 
 ```
-╭─ ◈ Atom Status ───────────────────────────────────────╮
+╭─ ◈ Totoro Status ───────────────────────────────────────╮
 │ Executing  Plan: 2/5 · Tools: 12 · Agents: 3
 ├── Plan ────────────────────────────────────────────────┤
 │  ████████░░░░░░░░░░░░ 40%
@@ -258,7 +258,7 @@ New session: session-1775544000 — implement search feature
 | `task` | 단일 서브에이전트 위임 |
 | `orchestrate_tool` | 병렬 서브에이전트 실행 |
 
-### Atom 커스텀 도구
+### Totoro 커스텀 도구
 
 | 도구 | 설명 |
 |------|------|
@@ -291,12 +291,12 @@ New session: session-1775544000 — implement search feature
 
 1. CLI 인수 (최우선)
 2. 환경변수 (`ATOM_MODEL`, `ATOM_FALLBACK_MODEL`, `ATOM_SANDBOX_MODE`)
-3. 프로젝트 설정 (`.atom/settings.json`)
-4. 사용자 전역 설정 (`~/.atom/settings.json`)
+3. 프로젝트 설정 (`.totoro/settings.json`)
+4. 사용자 전역 설정 (`~/.totoro/settings.json`)
 5. 기본값
 
 ```json
-// .atom/settings.json (예시)
+// .totoro/settings.json (예시)
 {
   "model": "anthropic/claude-sonnet-4-5",
   "provider": "openrouter",
@@ -316,15 +316,15 @@ New session: session-1775544000 — implement search feature
 
 | 경로 | 설명 |
 |------|------|
-| `~/.atom/checkpoints.db` | 세션 대화 상태 (SQLite) |
-| `~/.atom/sessions.json` | 세션 메타데이터 (이름, 턴 수, 시간) |
-| `~/.atom/settings.json` | 사용자 전역 설정 |
-| `.atom/settings.json` | 프로젝트별 설정 |
+| `~/.totoro/checkpoints.db` | 세션 대화 상태 (SQLite) |
+| `~/.totoro/sessions.json` | 세션 메타데이터 (이름, 턴 수, 시간) |
+| `~/.totoro/settings.json` | 사용자 전역 설정 |
+| `.totoro/settings.json` | 프로젝트별 설정 |
 
 ## 아키텍처
 
 ```
-atom/
+totoro/
 ├── cli.py                # CLI 진입점, 대화형/비대화형 모드
 ├── input.py              # prompt_toolkit 기반 입력 (자동완성 드롭다운)
 ├── orchestrator.py       # 병렬 서브에이전트 실행 엔진
@@ -357,9 +357,9 @@ atom/
 
 ```bash
 # 소스에서 실행
-python -m atom
+python -m totoro
 
 # 또는 설치 후 실행
 pip install -e .
-atom
+totoro
 ```

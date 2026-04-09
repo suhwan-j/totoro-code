@@ -42,7 +42,7 @@ class ContextConfig(BaseModel):
 class SandboxConfig(BaseModel):
     mode: Literal["none", "restricted", "container"] = "none"
     allowed_hosts: list[str] = Field(default_factory=list)
-    container_image: str = "atom-code-sandbox:latest"
+    container_image: str = "totoro-code-sandbox:latest"
 
 
 class AgentConfig(BaseModel):

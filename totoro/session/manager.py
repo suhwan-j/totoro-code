@@ -15,8 +15,8 @@ class SessionInfo:
     description: str = ""
 
 
-# Persistent session index at ~/.atom/sessions.json
-_SESSION_INDEX_PATH = Path.home() / ".atom" / "sessions.json"
+# Persistent session index at ~/.totoro/sessions.json
+_SESSION_INDEX_PATH = Path.home() / ".totoro" / "sessions.json"
 
 
 def _load_session_index() -> dict[str, SessionInfo]:
@@ -58,7 +58,7 @@ def _save_session_index(sessions: dict[str, SessionInfo]):
 class SessionManager:
     """Manages session lifecycle with checkpointer-backed persistence.
 
-    Session metadata is persisted to ~/.atom/sessions.json.
+    Session metadata is persisted to ~/.totoro/sessions.json.
     Actual state is stored by LangGraph's checkpointer (SqliteSaver).
     """
 
@@ -147,7 +147,7 @@ class SessionManager:
         if not sessions:
             return "No sessions found."
 
-        from atom.colors import BOLD, RESET
+        from totoro.colors import BOLD, RESET
         lines = [f"{BOLD}Sessions:{RESET}"]
         for s in sessions:
             age = _format_age(time.time() - s.created_at)

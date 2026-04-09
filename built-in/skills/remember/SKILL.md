@@ -30,8 +30,8 @@ Use memory when the knowledge is:
 - Something to always keep in mind
 - A simple rule or pattern
 
-**Global** (`~/.atom/AGENTS.md`): Universal preferences across all projects
-**Project** (`.atom/AGENTS.md`): Project-specific conventions and decisions
+**Global** (`~/.totoro/AGENTS.md`): Universal preferences across all projects
+**Project** (`.totoro/AGENTS.md`): Project-specific conventions and decisions
 
 ### -> Skill for reusable workflows and methodologies
 **Create a skill when** we developed:
@@ -45,8 +45,8 @@ Use memory when the knowledge is:
 If we established best practices around a workflow or process, capture them in a skill.
 
 ### Skill Location
-- User skills: `~/.atom/skills/<skill-name>/SKILL.md`
-- Project skills: `.atom/skills/<skill-name>/SKILL.md`
+- User skills: `~/.totoro/skills/<skill-name>/SKILL.md`
+- Project skills: `.totoro/skills/<skill-name>/SKILL.md`
 
 ### SKILL.md Format
 ```markdown

@@ -10,11 +10,11 @@ import threading
 from collections import deque
 from dataclasses import dataclass, field
 
-from atom.utils import sanitize_text
+from totoro.utils import sanitize_text
 
 
 # ─── ANSI helpers (palette-based) ───
-from atom.colors import (
+from totoro.colors import (
     RESET as _RESET, BOLD as _BOLD,
     DIM as _DIM, IVORY_DK,
     BLUE as _CYAN, BLUE_LT as _BODY, BLUE_DK,

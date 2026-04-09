@@ -12,7 +12,7 @@ from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.styles import Style
 
 # Mode definitions
-from atom.colors import (
+from totoro.colors import (
     RESET, BOLD,
     DIM, BLUE, BLUE_LT, AMBER, AMBER_LT, IVORY, IVORY_DK, COPPER,
 )
@@ -67,7 +67,7 @@ class SlashCompleter(Completer):
         if not text.startswith("/"):
             return
 
-        from atom.commands.registry import COMMAND_LIST
+        from totoro.commands.registry import COMMAND_LIST
 
         query = text.lower()
         for cmd, desc in COMMAND_LIST:
@@ -211,8 +211,8 @@ def pick_command() -> str | None:
 
     Returns the selected command string (e.g. "/model") or None if cancelled.
     """
-    from atom.commands.registry import COMMAND_LIST
-    from atom.colors import DIM as _D, BLUE as _B, AMBER as _A, BODY as _BT, RESET as _R, BOLD as _BO
+    from totoro.commands.registry import COMMAND_LIST
+    from totoro.colors import DIM as _D, BLUE as _B, AMBER as _A, BODY as _BT, RESET as _R, BOLD as _BO
 
     print(f"{_D}  ── Commands ──{_R}")
     for i, (cmd, desc) in enumerate(COMMAND_LIST):
@@ -252,7 +252,7 @@ def pick_command() -> str | None:
 
 def format_mode_help() -> str:
     """Format mode descriptions for /help output."""
-    from atom.colors import BOLD as _BO, RESET as _R
+    from totoro.colors import BOLD as _BO, RESET as _R
     lines = [
         f"  {_BO}Modes{_R} (cycle with {_BO}Shift+Tab{_R} or {_BO}/mode{_R}):",
     ]

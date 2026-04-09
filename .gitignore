@@ -12,5 +12,5 @@ dist/
 build/
 *.egg
 
-# Atom settings (contains API keys)
-.atom/settings.json
+# Totoro settings (contains API keys)
+.totoro/settings.json

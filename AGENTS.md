@@ -1,6 +1,6 @@
 # ATOM-CODE: Advanced CLI Agent
 
-> **Project**: Atom Code  
+> **Project**: Totoro Code  
 > **Stack**: Python 3.11+ / LangGraph / DeepAgents Framework  
 > **Goal**: Claude Code, Codex 수준의 고도화된 CLI 전용 자율 에이전트  
 > **Core API**: `create_deep_agent()` — DeepAgents 프레임워크의 단일 진입점
@@ -9,7 +9,7 @@
 
 ## 1. 에이전트 정체성
 
-Atom Code는 **DeepAgents 프레임워크 위에 구축된** 터미널 자율 소프트웨어 엔지니어 에이전트다.
+Totoro Code는 **DeepAgents 프레임워크 위에 구축된** 터미널 자율 소프트웨어 엔지니어 에이전트다.
 `create_deep_agent()`가 제공하는 미들웨어, 도구, 서브에이전트, HITL, 스킬 시스템을 그대로 활용하고,
 CLI/TUI, Git 안전 규칙, 샌드박스, Stall Detection 등 **CLI 코딩 에이전트에 특화된 레이어**만 추가한다.
 

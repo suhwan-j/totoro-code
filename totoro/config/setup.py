@@ -1,4 +1,4 @@
-"""Interactive setup wizard for Atom CLI."""
+"""Interactive setup wizard for Totoro CLI."""
 
 import getpass
 import json
@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 # ANSI colors (palette-based)
-from atom.colors import (
+from totoro.colors import (
     BLUE as _CYAN, AMBER as _YELLOW, AMBER_LT as _GREEN,
     DIM as _DIM, BOLD as _BOLD, COPPER as _RED, RESET as _RESET,
     ACCENT, BODY, SECONDARY,
@@ -61,7 +61,7 @@ def run_setup_wizard(project_root: Path) -> dict:
     """Run interactive setup wizard. Returns settings dict."""
     print()
     print(f"  {_DIM}╭─────────────────────────────────────╮{_RESET}")
-    print(f"  {_DIM}│  {ACCENT}Atom Setup{_DIM}                         │{_RESET}")
+    print(f"  {_DIM}│  {ACCENT}Totoro Setup{_DIM}                         │{_RESET}")
     print(f"  {_DIM}╰─────────────────────────────────────╯{_RESET}")
     print()
 
@@ -95,7 +95,7 @@ def run_setup_wizard(project_root: Path) -> dict:
     save_settings(settings, project_root)
 
     print()
-    print(f"  {_GREEN}✓{_RESET} Saved to {_BOLD}.atom/settings.json{_RESET}")
+    print(f"  {_GREEN}✓{_RESET} Saved to {_BOLD}.totoro/settings.json{_RESET}")
     print()
 
     return settings
@@ -299,11 +299,11 @@ def _configure_extras(existing: dict | None) -> dict:
 
 
 def save_settings(settings: dict, project_root: Path):
-    """Save settings to .atom/settings.json."""
-    atom_dir = project_root / ".atom"
-    atom_dir.mkdir(parents=True, exist_ok=True)
+    """Save settings to .totoro/settings.json."""
+    totoro_dir = project_root / ".totoro"
+    totoro_dir.mkdir(parents=True, exist_ok=True)
 
-    settings_path = atom_dir / "settings.json"
+    settings_path = totoro_dir / "settings.json"
 
     # Merge with existing non-provider settings (permissions, memory, etc.)
     if settings_path.exists():
@@ -323,8 +323,8 @@ def save_settings(settings: dict, project_root: Path):
 
 
 def load_provider_settings(project_root: Path) -> dict | None:
-    """Load settings from .atom/settings.json. Returns None if not found."""
-    settings_path = project_root / ".atom" / "settings.json"
+    """Load settings from .totoro/settings.json. Returns None if not found."""
+    settings_path = project_root / ".totoro" / "settings.json"
     if not settings_path.exists():
         return None
     try:
@@ -364,9 +364,9 @@ def inject_env_from_settings(settings: dict):
 
 
 def ensure_gitignore(project_root: Path):
-    """Add .atom/settings.json to .gitignore if not already present."""
+    """Add .totoro/settings.json to .gitignore if not already present."""
     gitignore_path = project_root / ".gitignore"
-    entry = ".atom/settings.json"
+    entry = ".totoro/settings.json"
 
     if gitignore_path.exists():
         content = gitignore_path.read_text()
@@ -374,7 +374,7 @@ def ensure_gitignore(project_root: Path):
             return
         if not content.endswith("\n"):
             content += "\n"
-        content += f"\n# Atom settings (contains API keys)\n{entry}\n"
+        content += f"\n# Totoro settings (contains API keys)\n{entry}\n"
         gitignore_path.write_text(content)
     else:
-        gitignore_path.write_text(f"# Atom settings (contains API keys)\n{entry}\n")
+        gitignore_path.write_text(f"# Totoro settings (contains API keys)\n{entry}\n")

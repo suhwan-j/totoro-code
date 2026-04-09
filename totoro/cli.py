@@ -1,4 +1,4 @@
-"""Atom CLI entry point."""
+"""Totoro CLI entry point."""
 import os
 import sys
 import time
@@ -7,9 +7,9 @@ import argparse
 
 # Lazy-loaded at first use (saves ~500-800ms startup):
 #   from langgraph.types import Command
-#   from atom.utils import sanitize_text
-#   from atom.status import StatusTracker
-#   from atom.diff import format_file_diff, find_line_number, safe_print as _safe_print
+#   from totoro.utils import sanitize_text
+#   from totoro.status import StatusTracker
+#   from totoro.diff import format_file_diff, find_line_number, safe_print as _safe_print
 Command = None
 sanitize_text = None
 StatusTracker = None
@@ -24,9 +24,9 @@ def _ensure_imports():
     if Command is not None:
         return
     from langgraph.types import Command as _Command
-    from atom.utils import sanitize_text as _sanitize
-    from atom.status import StatusTracker as _Tracker
-    from atom.diff import format_file_diff as _ffd, find_line_number as _fln, safe_print as _sp
+    from totoro.utils import sanitize_text as _sanitize
+    from totoro.status import StatusTracker as _Tracker
+    from totoro.diff import format_file_diff as _ffd, find_line_number as _fln, safe_print as _sp
     Command = _Command
     sanitize_text = _sanitize
     StatusTracker = _Tracker
@@ -38,7 +38,7 @@ def _ensure_imports():
 # ─── Pending tool calls for diff display ───
 def _banner(config=None, session_id: str = "") -> str:
     import shutil
-    from atom.colors import ACCENT, BODY, SECONDARY, DIM, RESET
+    from totoro.colors import ACCENT, BODY, SECONDARY, DIM, RESET
     width = shutil.get_terminal_size().columns
 
     model_name = config.model if config else "unknown"
@@ -54,17 +54,17 @@ def _banner(config=None, session_id: str = "") -> str:
 
     # Mascot — Totoro (raw for width calc)
     mascot_raw = [
-        "        ███                     ███",
-        "       █████                   ████",
-        "       █████                   ████",
-        "        ███                    ███",
-        "          ███████████████████████",
-        "       ███████████████████████████",
+        "        ███                   ███",
+        "       █████                 █████",
+        "       █████                 █████",
+        "        ███                   ███",
+        "          ██████████████████████",
+        "       ████████████████████████████",
         "      █████ ▄██▄ ████████ ▄██▄ █████",
         "     ╲████ █▀▀▀█ ████████ █▀▀▀█ ████╱",
         "   ───████ █●░░█ ████████ █●░░█ ████───",
-        "      ╱███ ▀██▀ ████▼████ ▀██▀ ████ ╲",
-        "        ███████████░▄▄░██████████",
+        "      ╱███ ▀██▀ ████▼████ ▀██▀ ███ ╲",
+        "        ██████████░▄▄▄░██████████",
         "      ▐███░░░░░░░░░░░░░░░░░░░░░░███▌",
         "     ███░░░░░▄▀▀▀▄░░░░░░░▄▀▀▀▄░░░░░███",
         "  |██░░░░░▄▀▀▀▄░░░░▄▀▀▀▄░░░░▄▀▀▀▄░░░░██|",
@@ -74,7 +74,7 @@ def _banner(config=None, session_id: str = "") -> str:
         " █|░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|█",
         " ▐|░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|▌",
         "   ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░",
-        "    ░░░ ▄██▄ ░░░░░░░░░░░░░░░ ▄██▄ ░░",
+        "    ░░░ ▄██▄ ░░░░░░░░░░░░░░░ ▄██▄ ░░░",
         "══════ ██████ ░░░░░░░░░░░░░ ██████ ═════",
         "        ▀███▀               ▀███▀",
     ]
@@ -118,13 +118,13 @@ _pending_file_ops: dict[str, dict] = {}  # tool_call_id -> {name, args}
 
 def _is_slash_command(text: str) -> bool:
     """Check if input is a slash command (not a file path like /home/...)."""
-    from atom.commands.registry import get_command_names
+    from totoro.commands.registry import get_command_names
     first_word = text.strip().split()[0].lower() if text.strip() else ""
     return any(first_word == cmd or first_word.startswith(cmd + " ") for cmd in get_command_names())
 
 
 # ─── ANSI formatting helpers (palette-based) ───
-from atom.colors import (
+from totoro.colors import (
     RESET as _RESET, BOLD as _BOLD, DIM as _DIM,
     BLUE as _BLUE, BODY as _BODY, SECONDARY as _SECONDARY,
     AMBER as _AMBER, AMBER_LT as _AMBER_LT,
@@ -137,16 +137,16 @@ _MAGENTA = _SECONDARY
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Atom: Advanced CLI Coding Agent",
+        description="Totoro: Advanced CLI Coding Agent",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""Examples:
-  atom                              # Interactive mode
-  atom -n "fix the login bug"      # Non-interactive single task
-  atom --auto-approve              # Skip all approval prompts
-  atom --model anthropic/claude-sonnet-4-5  # Use specific model
-  atom --provider vllm --model meta-llama/Llama-3.1-70B  # Use vLLM
-  atom --resume <session-id>       # Resume a previous session
-  atom --list-sessions             # List all sessions
+  totoro                              # Interactive mode
+  totoro -n "fix the login bug"      # Non-interactive single task
+  totoro --auto-approve              # Skip all approval prompts
+  totoro --model anthropic/claude-sonnet-4-5  # Use specific model
+  totoro --provider vllm --model meta-llama/Llama-3.1-70B  # Use vLLM
+  totoro --resume <session-id>       # Resume a previous session
+  totoro --list-sessions             # List all sessions
 """,
     )
     parser.add_argument("-n", "--non-interactive", type=str, metavar="TASK", help="Run single task non-interactively")
@@ -161,11 +161,11 @@ def main():
     parser.add_argument("task", nargs="*", help="Task to run (alternative to -n)")
     args = parser.parse_args()
 
-    from atom.config.settings import load_config, ensure_api_keys
+    from totoro.config.settings import load_config, ensure_api_keys
     ensure_api_keys(force_setup=args.setup)
 
     if args.setup:
-        print("  Setup complete. Starting Atom...\n")
+        print("  Setup complete. Starting Totoro...\n")
 
     cli_overrides = {}
     if args.auto_approve:
@@ -177,15 +177,15 @@ def main():
 
     config = load_config(cli_overrides=cli_overrides)
 
-    from atom.core.agent import create_atom_agent
-    agent, checkpointer, store, auto_dream = create_atom_agent(config)
+    from totoro.core.agent import create_totoro_agent
+    agent, checkpointer, store, auto_dream = create_totoro_agent(config)
 
     # Initialize session manager
-    from atom.session.manager import SessionManager
+    from totoro.session.manager import SessionManager
     session_manager = SessionManager(checkpointer=checkpointer)
 
     # Inject into command registry
-    from atom.commands.registry import set_session_manager, set_auto_dream, set_agent_config, set_skill_manager
+    from totoro.commands.registry import set_session_manager, set_auto_dream, set_agent_config, set_skill_manager
     set_session_manager(session_manager)
     set_auto_dream(auto_dream)
     set_agent_config(config)
@@ -198,7 +198,7 @@ def main():
         return
 
     # Initialize skill manager lazily (only needed for interactive/task mode)
-    from atom.skills import SkillManager
+    from totoro.skills import SkillManager
     skill_manager = SkillManager(config.project_root)
     set_skill_manager(skill_manager)
 
@@ -207,7 +207,7 @@ def main():
         invoke_config = session_manager.get_invoke_config(session_info.session_id)
         _stream_with_hitl(agent, task, invoke_config, auto_approve=args.auto_approve, verbose=verbose)
     elif args.resume:
-        from atom.session.restore import restore_session
+        from totoro.session.restore import restore_session
         invoke_config = restore_session(agent, args.resume, session_manager)
         if invoke_config is None:
             print("Could not restore session. Starting new session.")
@@ -226,8 +226,8 @@ def _run_interactive(agent, invoke_config: dict, session_manager=None,
                      auto_approve: bool = False, verbose: bool = False,
                      config=None):
     """Interactive mode main loop."""
-    from atom.commands.registry import handle_slash_command
-    from atom.input import InputHandler
+    from totoro.commands.registry import handle_slash_command
+    from totoro.input import InputHandler
 
     handler = InputHandler(initial_mode="auto-approve" if auto_approve else "default")
 
@@ -266,10 +266,10 @@ def _run_interactive(agent, invoke_config: dict, session_manager=None,
             # Handle /skill reload
             if result == "__skill_reload__":
                 print(f"{_DIM}  Reloading skills...{_RESET}", flush=True)
-                from atom.core.agent import create_atom_agent
+                from totoro.core.agent import create_totoro_agent
                 try:
-                    agent, _, _, auto_dream = create_atom_agent(config)
-                    from atom.commands.registry import set_auto_dream
+                    agent, _, _, auto_dream = create_totoro_agent(config)
+                    from totoro.commands.registry import set_auto_dream
                     set_auto_dream(auto_dream)
                     print(f"  {_BOLD}Skills reloaded.{_RESET}")
                 except Exception as e:
@@ -327,10 +327,10 @@ def _handle_model_change(sentinel: str, config, session_manager):
     print(f"{_DIM}  Switching model: {old_model} → {new_model}...{_RESET}", flush=True)
 
     try:
-        from atom.core.agent import create_atom_agent
-        agent, _, _, auto_dream = create_atom_agent(config)
+        from totoro.core.agent import create_totoro_agent
+        agent, _, _, auto_dream = create_totoro_agent(config)
 
-        from atom.commands.registry import set_auto_dream, set_agent_config
+        from totoro.commands.registry import set_auto_dream, set_agent_config
         set_auto_dream(auto_dream)
         set_agent_config(config)
 
@@ -351,10 +351,10 @@ def _handle_model_change(sentinel: str, config, session_manager):
 
 
 def _persist_model_to_settings(model_name: str, project_root: str):
-    """Save selected model to .atom/settings.json so it persists across sessions."""
+    """Save selected model to .totoro/settings.json so it persists across sessions."""
     import json
     from pathlib import Path
-    settings_path = Path(project_root) / ".atom" / "settings.json"
+    settings_path = Path(project_root) / ".totoro" / "settings.json"
     if settings_path.exists():
         try:
             with open(settings_path) as f:
@@ -371,9 +371,9 @@ def _stream_with_hitl(agent, user_input: str, config: dict, auto_approve: bool =
                       verbose: bool = False, handler=None):
     """Stream agent response with HITL interrupt handling and live status dashboard."""
     _ensure_imports()
-    from atom.orchestrator import set_tracker, set_pane_manager, RenderThread
-    from atom.pane import PaneManager
-    from atom.hotkey import HotkeyListener
+    from totoro.orchestrator import set_tracker, set_pane_manager, RenderThread
+    from totoro.pane import PaneManager
+    from totoro.hotkey import HotkeyListener
 
     tracker = StatusTracker()
     set_tracker(tracker)
@@ -842,7 +842,7 @@ def _collect_hitl_decisions(interrupts) -> tuple[list[dict], str]:
 
 def _apply_natural_language_edit(tool_name: str, original_args: dict, user_instruction: str) -> dict | None:
     """Use a lightweight LLM to apply a natural language edit to tool args."""
-    from atom.core.models import create_lightweight_model
+    from totoro.core.models import create_lightweight_model
 
     model = create_lightweight_model()
     if model is None:

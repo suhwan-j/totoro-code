@@ -1,4 +1,4 @@
-"""Atom color palette — truecolor ANSI escape sequences.
+"""Totoro color palette — truecolor ANSI escape sequences.
 
 Background : #0D1117
 Blue       : #111C2E / #1A5FA8 / #56A0F0 / #A8CFFA

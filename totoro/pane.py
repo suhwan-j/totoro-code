@@ -8,7 +8,7 @@ import time
 import threading
 from dataclasses import dataclass, field
 
-from atom.colors import DIM as _DIM, AMBER_LT as _GREEN, COPPER as _RED, BOLD as _BOLD, RESET as _RESET
+from totoro.colors import DIM as _DIM, AMBER_LT as _GREEN, COPPER as _RED, BOLD as _BOLD, RESET as _RESET
 
 
 @dataclass

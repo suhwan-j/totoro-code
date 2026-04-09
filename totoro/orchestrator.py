@@ -20,10 +20,10 @@ from dataclasses import dataclass, field
 
 from langchain_core.tools import tool
 
-from atom.utils import sanitize_text
-from atom.pane import SubagentEvent, SubagentResult, PaneManager
+from totoro.utils import sanitize_text
+from totoro.pane import SubagentEvent, SubagentResult, PaneManager
 
-# ─── Module-level state (set by create_atom_agent / CLI) ───
+# ─── Module-level state (set by create_totoro_agent / CLI) ───
 _subagent_configs: list[dict] = []   # serializable subagent configs
 _model_config: dict = {}             # {model_name, provider} for rebuilding in child process
 _project_root: str = "."
@@ -53,14 +53,14 @@ def set_pane_manager(pane_manager: PaneManager | None):
 
 @tool
 def orchestrate_tool(tasks_json: str) -> str:
-    """Run multiple Atom task agents in PARALLEL. Use this instead of sequential task calls.
+    """Run multiple Totoro task agents in PARALLEL. Use this instead of sequential task calls.
 
-    Each task spawns an independent Atom agent with full tool access and skills.
+    Each task spawns an independent Totoro agent with full tool access and skills.
     All tasks execute concurrently and their results are combined.
 
     Args:
         tasks_json: JSON array of task objects. Each object has:
-            - "task": detailed description of what the Atom agent should do
+            - "task": detailed description of what the Totoro agent should do
 
     Example:
         orchestrate_tool('[
@@ -102,7 +102,7 @@ def orchestrate_tool(tasks_json: str) -> str:
 def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
     """Execute tasks in parallel using multiprocessing + curses split-pane."""
     import curses as _curses
-    from atom.tui import SplitPaneTUI
+    from totoro.tui import SplitPaneTUI
 
     results: dict[str, SubagentResult | str] = {}
     event_queue: mp.Queue = mp.Queue(maxsize=2000)
@@ -125,12 +125,12 @@ def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
     for i, task in enumerate(tasks):
         agent_type = task.get("type", "coder")  # type hint preserved for backwards compat
         description = task.get("task", task.get("description", ""))
-        label = f"atom-{i}"
+        label = f"totoro-{i}"
 
-        # All tasks use the unified atom task agent config
+        # All tasks use the unified totoro task agent config
         cfg = config_map.get(agent_type) or config_map.get("coder")
         if cfg is None:
-            cfg = {"name": "atom", "system_prompt": TASK_AGENT_PROMPT, "description": ""}
+            cfg = {"name": "totoro", "system_prompt": TASK_AGENT_PROMPT, "description": ""}
 
         if _tracker:
             _tracker.on_subagent_start(label, description)
@@ -224,7 +224,7 @@ def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
     if _pane_manager:
         summary = _pane_manager.get_summary()
         if summary:
-            from atom.diff import safe_print
+            from totoro.diff import safe_print
             safe_print(summary)
         _pane_manager.clear()
 
@@ -293,7 +293,7 @@ def _worker_process(
         os._exit(0)
 
 
-TASK_AGENT_PROMPT = """You are Atom, a task-focused coding agent. You execute a single assigned task directly and efficiently.
+TASK_AGENT_PROMPT = """You are Totoro, a task-focused coding agent. You execute a single assigned task directly and efficiently.
 
 ## Rules
 - Execute the given task immediately — do NOT plan, do NOT create todos, do NOT delegate.
@@ -317,20 +317,20 @@ def _run_subagent_in_process(
 ) -> SubagentResult:
     """Rebuild graph and stream subagent in child process.
 
-    Each subagent is a full Atom task agent (create_deep_agent) with skills,
+    Each subagent is a full Totoro task agent (create_deep_agent) with skills,
     but without the orchestration layer (no planning, no sub-delegation).
     """
-    from atom.core.agent import _resolve_model
+    from totoro.core.agent import _resolve_model
     from deepagents import create_deep_agent
     from deepagents.backends import LocalShellBackend
-    from atom.layers.sanitize import SanitizeMiddleware
-    from atom.layers.stall_detector import StallDetectorMiddleware
+    from totoro.layers.sanitize import SanitizeMiddleware
+    from totoro.layers.stall_detector import StallDetectorMiddleware
     from langgraph.checkpoint.memory import MemorySaver
 
     model = _resolve_model(model_config["model_name"], model_config["provider"])
 
     subagent = create_deep_agent(
-        name="atom-task",
+        name="totoro-task",
         model=model,
         system_prompt=TASK_AGENT_PROMPT,
         tools=[],  # backend provides file I/O + shell; no extra tools needed
