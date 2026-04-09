@@ -695,7 +695,10 @@ class RenderThread(threading.Thread):
 
     def run(self):
         while not self._halt.is_set():
-            self._tracker.render()
+            try:
+                self._tracker.render()
+            except Exception:
+                pass  # Don't crash the render thread on display errors
             self._halt.wait(self._interval)
 
     def shutdown(self):
