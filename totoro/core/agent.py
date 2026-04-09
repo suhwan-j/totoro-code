@@ -276,7 +276,7 @@ def _build_orchestrator_subagents(model, config: AgentConfig):
         configs=serializable_configs,
         model_name=config.model,
         provider=_resolved_provider if _resolved_provider != "auto" else config.provider,
-        project_root=config.project_root,
+        project_root=str(Path(config.project_root).resolve()),
     )
 
 
