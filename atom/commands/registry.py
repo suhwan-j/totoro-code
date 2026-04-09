@@ -93,8 +93,8 @@ def _cmd_help(args, agent, config) -> str:
   /mode              Cycle mode (default → auto-approve → plan-only)
   /new [description] Start a new session (e.g. /new fix login bug)
   /clear             Same as /new
-  /model             Show current model info
-  /model <name>      Switch to a different model (e.g. /model claude-haiku-4-5)
+  /model             Show available models & switch interactively
+  /model <name>      Switch to a specific model (e.g. /model claude-haiku-4-5)
   /session           Show current session info
   /session <id|#>    Switch to another session (e.g. /session 2)
   /sessions          List all sessions with numbers
@@ -122,22 +122,60 @@ def _cmd_new(args, agent, config) -> str:
 
 
 def _cmd_model(args, agent, config) -> str:
+    from atom.config.setup import _PROVIDER_MODELS
     model_name = _agent_config.model if _agent_config else "unknown"
     provider = _agent_config.provider if _agent_config else "unknown"
 
     if not args.strip():
-        # No argument — show current model and available shortcuts
-        lines = [
-            f"\033[1mCurrent model:\033[0m {model_name}",
-            f"\033[1mProvider:\033[0m {provider}",
-            "",
-            "\033[0;90mUsage: /model <model-name> [provider]\033[0m",
-            "\033[0;90mExamples:\033[0m",
-            "\033[0;90m  /model anthropic/claude-sonnet-4-5\033[0m",
-            "\033[0;90m  /model Qwen/Qwen3-32B vllm\033[0m",
-            "\033[0;90m  /model claude-haiku-4-5 anthropic\033[0m",
-        ]
-        return "\n".join(lines)
+        # No argument — show interactive model selector
+        models = _PROVIDER_MODELS.get(provider, [])
+        if not models:
+            # No predefined list (vllm etc.) — show info + usage
+            lines = [
+                f"\033[1mCurrent model:\033[0m {model_name}",
+                f"\033[1mProvider:\033[0m {provider}",
+                "",
+                "\033[0;90mUsage: /model <model-name>\033[0m",
+            ]
+            return "\n".join(lines)
+
+        # Show numbered list
+        print(f"\033[1mCurrent model:\033[0m {model_name}")
+        print(f"\033[1mProvider:\033[0m {provider}")
+        print()
+        print(f"  Select model:")
+        print()
+        for i, (mid, display, note) in enumerate(models, 1):
+            marker = " \033[1;36m← current\033[0m" if mid == model_name else ""
+            note_str = f" \033[0;90m({note})\033[0m" if note else ""
+            print(f"    \033[1m{i})\033[0m {display:<22}{note_str}{marker}")
+        print(f"    \033[1mc)\033[0m \033[0;90mCustom model ID...\033[0m")
+        print()
+
+        while True:
+            try:
+                choice = input("  > ").strip()
+                if not choice:
+                    return f"Keeping current model: {model_name}"
+
+                if choice.lower() == "c":
+                    print(f"\n  Enter custom model ID:")
+                    custom = input("  > ").strip()
+                    if custom:
+                        return f"__model_change__:{custom}"
+                    return f"Keeping current model: {model_name}"
+
+                num = int(choice)
+                if 1 <= num <= len(models):
+                    selected = models[num - 1][0]
+                    if selected == model_name:
+                        return f"Already using: {model_name}"
+                    return f"__model_change__:{selected}"
+                print(f"  \033[1;31m1-{len(models)} 사이의 숫자 또는 'c'를 입력하세요.\033[0m")
+            except ValueError:
+                print(f"  \033[1;31m1-{len(models)} 사이의 숫자 또는 'c'를 입력하세요.\033[0m")
+            except (EOFError, KeyboardInterrupt):
+                return f"Keeping current model: {model_name}"
 
     # Parse: /model <model_name> [provider]
     parts = args.strip().split()

@@ -224,18 +224,25 @@ class SplitPaneTUI:
                 connector = "└── " if is_last else "├── "
                 child_pre = "    " if is_last else "│   "
 
-                # Status icon
+                # Status icon + PID
+                pid_str = f"({pane.pid})" if pane and pane.pid else ""
+                name_with_pid = f"{name} {pid_str}" if pid_str else name
+
                 if pane and pane.status == "done":
                     self._waddstr(win, row, 3, connector, _PAIR_DIM)
                     self._waddstr(win, row, 3 + len(connector), "✓ ", _PAIR_GREEN)
                     self._waddstr(win, row, 3 + len(connector) + 2, name, _PAIR_GREEN, bold=True)
+                    if pid_str:
+                        self._waddstr(win, row, 3 + len(connector) + 2 + len(name) + 1, pid_str, _PAIR_DIM)
                 else:
                     self._waddstr(win, row, 3, connector, _PAIR_DIM)
                     self._waddstr(win, row, 3 + len(connector), "◈ ", _PAIR_MAGENTA)
                     self._waddstr(win, row, 3 + len(connector) + 2, name, _PAIR_BOLD_WHITE, bold=True)
+                    if pid_str:
+                        self._waddstr(win, row, 3 + len(connector) + 2 + len(name) + 1, pid_str, _PAIR_DIM)
 
                 stats_text = f"  {elapsed} · {tool_count} tools"
-                self._waddstr(win, row, 3 + len(connector) + 2 + len(name), stats_text, _PAIR_DIM)
+                self._waddstr(win, row, 3 + len(connector) + 2 + len(name_with_pid), stats_text, _PAIR_DIM)
                 row += 1
 
                 # Current tool or recent line
@@ -271,18 +278,27 @@ class SplitPaneTUI:
 
             # Header
             elapsed = pane.elapsed
+            pid_str = f"({pane.pid})" if pane.pid else ""
+            label_display = f"{pane.label} {pid_str}" if pid_str else pane.label
+
             if pane.status == "done":
                 self._waddstr(win, row, 1, "✓ ", _PAIR_GREEN)
                 self._waddstr(win, row, 3, pane.label, _PAIR_GREEN, bold=True)
+                if pid_str:
+                    self._waddstr(win, row, 3 + len(pane.label) + 1, pid_str, _PAIR_DIM)
             elif pane.status == "error":
                 self._waddstr(win, row, 1, "✗ ", _PAIR_RED)
                 self._waddstr(win, row, 3, pane.label, _PAIR_RED, bold=True)
+                if pid_str:
+                    self._waddstr(win, row, 3 + len(pane.label) + 1, pid_str, _PAIR_DIM)
             else:
                 self._waddstr(win, row, 1, "◈ ", _PAIR_CYAN)
                 self._waddstr(win, row, 3, pane.label, _PAIR_BOLD_WHITE, bold=True)
+                if pid_str:
+                    self._waddstr(win, row, 3 + len(pane.label) + 1, pid_str, _PAIR_DIM)
 
             stats = f"  {elapsed} · {pane.tool_count} tools"
-            self._waddstr(win, row, 3 + len(pane.label), stats, _PAIR_DIM)
+            self._waddstr(win, row, 3 + len(label_display), stats, _PAIR_DIM)
             row += 1
 
             # Current tool indicator

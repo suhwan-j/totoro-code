@@ -234,10 +234,11 @@ def _build_orchestrator_subagents(model, config: AgentConfig):
             "system_prompt": cfg["system_prompt"],
         })
 
+    # Pass the resolved provider so child processes skip auto-detection
     register_subagent_configs(
         configs=serializable_configs,
         model_name=config.model,
-        provider=config.provider,
+        provider=_resolved_provider if _resolved_provider != "auto" else config.provider,
         project_root=config.project_root,
     )
 
@@ -279,7 +280,12 @@ def _resolve_model(model_name: str, provider: str = "auto"):
     Args:
         model_name: Model name/identifier.
         provider: "auto" to detect from env, or explicit provider name.
+
+    Returns:
+        LLM model instance. Also sets _resolved_provider as side-effect for orchestrator.
     """
+    global _resolved_provider
+
     providers = {
         "openrouter": _make_openrouter,
         "anthropic": _make_anthropic,
@@ -294,17 +300,23 @@ def _resolve_model(model_name: str, provider: str = "auto"):
         model = factory(model_name)
         if model is None:
             raise RuntimeError(f"Provider '{provider}' is not configured. Check your .env file.")
+        _resolved_provider = provider
         return model
 
     # Auto-detect: try each provider in priority order
-    for factory in providers.values():
+    for prov_name, factory in providers.items():
         model = factory(model_name)
         if model is not None:
+            _resolved_provider = prov_name
             return model
 
     raise RuntimeError(
         "No API key found. Set OPENROUTER_API_KEY, ANTHROPIC_API_KEY, OPENAI_API_KEY, or VLLM_BASE_URL."
     )
+
+
+# Resolved provider from last _resolve_model call (used by orchestrator to skip re-detection)
+_resolved_provider: str = "auto"
 
 
 def _make_openrouter(model_name: str):
@@ -332,7 +344,7 @@ def _make_anthropic(model_name: str):
     if not key:
         return None
     from langchain_anthropic import ChatAnthropic
-    return ChatAnthropic(model_name=model_name, api_key=key)
+    return ChatAnthropic(model_name=model_name, api_key=key, timeout=60)
 
 
 def _make_openai(model_name: str):
@@ -340,7 +352,7 @@ def _make_openai(model_name: str):
     if not key:
         return None
     from langchain_openai import ChatOpenAI
-    return ChatOpenAI(model=model_name, openai_api_key=key)
+    return ChatOpenAI(model=model_name, openai_api_key=key, request_timeout=60)
 
 
 def _make_vllm(model_name: str):
@@ -352,6 +364,7 @@ def _make_vllm(model_name: str):
         model=model_name,
         openai_api_key=os.environ.get("VLLM_API_KEY", "EMPTY"),
         openai_api_base=base_url,
+        request_timeout=60,
     )
 
 

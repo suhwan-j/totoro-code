@@ -44,6 +44,7 @@ class PaneState:
     current_tool: str = ""
     files: list = field(default_factory=list)
     max_lines: int = 20
+    pid: int | None = None
 
     @property
     def elapsed(self) -> str:
@@ -65,9 +66,15 @@ class PaneManager:
         self._lock = threading.Lock()
         self.panes: dict[str, PaneState] = {}
 
-    def add_subagent(self, label: str, description: str):
+    def add_subagent(self, label: str, description: str, pid: int | None = None):
         with self._lock:
-            self.panes[label] = PaneState(label=label, description=description)
+            self.panes[label] = PaneState(label=label, description=description, pid=pid)
+
+    def set_pid(self, label: str, pid: int):
+        with self._lock:
+            pane = self.panes.get(label)
+            if pane:
+                pane.pid = pid
 
     def update_subagent(self, event: SubagentEvent):
         with self._lock:
@@ -103,6 +110,10 @@ class PaneManager:
                 text = event.data.get("text", "")
                 for line in text.splitlines()[:6]:
                     pane.append(line)
+
+            elif event.event_type == "done":
+                if pane.status == "running":
+                    pane.status = "done"
 
             elif event.event_type == "error":
                 pane.status = "error"

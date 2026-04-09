@@ -7,6 +7,7 @@ import time
 import random
 import shutil
 import threading
+from collections import deque
 from dataclasses import dataclass, field
 
 from atom.utils import sanitize_text
@@ -91,15 +92,14 @@ class StatusTracker:
         self._lock = threading.Lock()
         self.todos: list[TodoItem] = []
         self.active_subagents: dict[str, SubagentInfo] = {}
-        self.completed_subagents: list[SubagentInfo] = []
+        self.completed_subagents: deque[SubagentInfo] = deque(maxlen=50)
         self.current_tool: str | None = None
         self.current_tool_args: str = ""
         self.tool_count: int = 0
         self.phase: str = "Initializing"
         self._last_panel_lines: int = 0
         self._panel_enabled: bool = True
-        self.activity_log: list[str] = []  # Recent file operations
-        self._max_log: int = 6
+        self.activity_log: deque[str] = deque(maxlen=6)  # Recent file operations
         self._dirty: bool = True  # Only re-render when state changes
         self._pane_manager = None  # Set by CLI for detailed subagent view
         self.agent_name: str = _pick_agent_name()
@@ -204,13 +204,9 @@ class StatusTracker:
                 short = path.split("/")[-1] if "/" in path else path
                 icon = "+" if tool_name == "write_file" else "~"
                 self.activity_log.append(f"{icon} {agent_name}: {short}")
-                if len(self.activity_log) > self._max_log:
-                    self.activity_log.pop(0)
             elif tool_name == "execute":
                 cmd = tool_args.get("command", "")[:50]
                 self.activity_log.append(f"$ {agent_name}: {cmd}")
-                if len(self.activity_log) > self._max_log:
-                    self.activity_log.pop(0)
             self._mark_dirty()
 
     def advance_plan(self):
@@ -386,7 +382,7 @@ class StatusTracker:
         # ─── Activity Log ───
         if self.activity_log:
             lines.append(f"   {_DIM}── Recent {'─' * max(0, width - 14)}{_RESET}")
-            for entry in self.activity_log[-self._max_log:]:
+            for entry in self.activity_log:
                 if entry.startswith("+"):
                     lines.append(f"   {_GREEN}{entry[:width - 6]}{_RESET}")
                 elif entry.startswith("~"):

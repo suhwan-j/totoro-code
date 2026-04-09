@@ -22,6 +22,27 @@ PROVIDERS = [
     ("vllm", "vLLM", "self-hosted"),
 ]
 
+# Provider → available models
+_PROVIDER_MODELS = {
+    "openrouter": [
+        ("anthropic/claude-haiku-4-5", "Claude Haiku 4.5", "fast & cheap"),
+        ("openai/gpt-5.4-mini", "GPT-5.4 Mini", "fast"),
+        ("google/gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash", "fast & cheap"),
+        ("z-ai/glm-5v-turbo", "GLM 5v Turbo", "fast"),
+        ("qwen/qwen3.5-35b-a3b", "Qwen3.5 35B", ""),
+    ],
+    "anthropic": [
+        ("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5", "recommended"),
+        ("claude-opus-4-5-20250918", "Claude Opus 4.5", "most capable"),
+        ("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "fast & cheap"),
+    ],
+    "openai": [
+        ("gpt-5.4", "GPT-5.4", "recommended"),
+        ("gpt-5.4-mini", "GPT-5.4 Mini", "fast"),
+    ],
+    "vllm": [],  # user specifies custom model
+}
+
 # Provider → env var mapping
 _ENV_MAP = {
     "openrouter": {"api_key": "OPENROUTER_API_KEY", "base_url": "OPENROUTER_BASE_URL"},
@@ -58,11 +79,16 @@ def run_setup_wizard(project_root: Path) -> dict:
     # 3. Base URL (for openrouter / vllm)
     base_url = _enter_base_url(provider, existing)
 
+    # 4. Select model
+    model = _select_model(provider, existing)
+
     settings = {"provider": provider, "api_key": api_key}
+    if model:
+        settings["model"] = model
     if base_url:
         settings["base_url"] = base_url
 
-    # 4. Optional extras
+    # 5. Optional extras
     extras = _configure_extras(existing)
     if extras:
         settings["extras"] = extras
@@ -160,6 +186,66 @@ def _enter_base_url(provider: str, existing: dict | None) -> str | None:
                 raise SystemExit(0)
 
     return None
+
+
+def _select_model(provider: str, existing: dict | None) -> str | None:
+    """Show available models for the selected provider and let user pick one."""
+    models = _PROVIDER_MODELS.get(provider, [])
+
+    if not models:
+        # vLLM or unknown — ask for custom model name
+        current = (existing or {}).get("model")
+        hint = f" {_DIM}(Enter to keep: {current}){_RESET}" if current else ""
+        print(f"\n  Enter model name for your vLLM endpoint:{hint}")
+        try:
+            name = input("  > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            raise SystemExit(0)
+        if not name and current:
+            return current
+        return name if name else None
+
+    current = (existing or {}).get("model")
+    print(f"\n  Select model:")
+    print()
+    for i, (model_id, display_name, note) in enumerate(models, 1):
+        marker = f" {_CYAN}← current{_RESET}" if model_id == current else ""
+        note_str = f" {_DIM}({note}){_RESET}" if note else ""
+        print(f"    {_BOLD}{i}){_RESET} {display_name:<22}{note_str}{marker}")
+    print(f"    {_BOLD}c){_RESET} {_DIM}Custom model ID...{_RESET}")
+    print()
+
+    while True:
+        try:
+            default_hint = ""
+            if current:
+                idx = next((i for i, (m, _, _) in enumerate(models, 1) if m == current), None)
+                if idx:
+                    default_hint = f" [{idx}]"
+            choice = input(f"  > {default_hint and f'{_DIM}{default_hint}{_RESET} '}").strip()
+
+            if not choice and current:
+                return current
+
+            if choice.lower() == "c":
+                print(f"\n  Enter custom model ID:")
+                custom = input("  > ").strip()
+                if custom:
+                    return custom
+                continue
+
+            num = int(choice)
+            if 1 <= num <= len(models):
+                selected = models[num - 1][0]
+                print(f"  {_GREEN}✓{_RESET} {selected}")
+                return selected
+            print(f"  {_RED}1-{len(models)} 사이의 숫자 또는 'c'를 입력하세요.{_RESET}")
+        except ValueError:
+            print(f"  {_RED}1-{len(models)} 사이의 숫자 또는 'c'를 입력하세요.{_RESET}")
+        except (EOFError, KeyboardInterrupt):
+            print()
+            raise SystemExit(0)
 
 
 def _configure_extras(existing: dict | None) -> dict:

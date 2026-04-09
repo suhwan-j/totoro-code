@@ -23,8 +23,9 @@ def load_config(cli_overrides: dict | None = None, project_root: str | None = No
             proj_data = json.load(f)
             # Filter out setup-wizard-only keys that don't belong in AgentConfig
             for k, v in proj_data.items():
-                if k not in ("api_key", "base_url", "extras"):
-                    config_dict[k] = v
+                if k in ("api_key", "base_url", "extras"):
+                    continue
+                config_dict[k] = v
 
     # Env overrides
     if v := os.environ.get("ATOM_MODEL"):

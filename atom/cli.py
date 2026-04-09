@@ -5,11 +5,34 @@ import time
 import json
 import argparse
 
-from langgraph.types import Command
+# Lazy-loaded at first use (saves ~500-800ms startup):
+#   from langgraph.types import Command
+#   from atom.utils import sanitize_text
+#   from atom.status import StatusTracker
+#   from atom.diff import format_file_diff, find_line_number, safe_print as _safe_print
+Command = None
+sanitize_text = None
+StatusTracker = None
+format_file_diff = None
+find_line_number = None
+_safe_print = None
 
-from atom.utils import sanitize_text
-from atom.status import StatusTracker
-from atom.diff import format_file_diff, find_line_number, safe_print as _safe_print
+
+def _ensure_imports():
+    """Lazy-load heavy dependencies on first actual use."""
+    global Command, sanitize_text, StatusTracker, format_file_diff, find_line_number, _safe_print
+    if Command is not None:
+        return
+    from langgraph.types import Command as _Command
+    from atom.utils import sanitize_text as _sanitize
+    from atom.status import StatusTracker as _Tracker
+    from atom.diff import format_file_diff as _ffd, find_line_number as _fln, safe_print as _sp
+    Command = _Command
+    sanitize_text = _sanitize
+    StatusTracker = _Tracker
+    format_file_diff = _ffd
+    find_line_number = _fln
+    _safe_print = _sp
 
 
 # ─── Pending tool calls for diff display ───
@@ -107,16 +130,11 @@ def main():
     from atom.session.manager import SessionManager
     session_manager = SessionManager(checkpointer=checkpointer)
 
-    # Initialize skill manager
-    from atom.skills import SkillManager
-    skill_manager = SkillManager(config.project_root)
-
     # Inject into command registry
     from atom.commands.registry import set_session_manager, set_auto_dream, set_agent_config, set_skill_manager
     set_session_manager(session_manager)
     set_auto_dream(auto_dream)
     set_agent_config(config)
-    set_skill_manager(skill_manager)
 
     task = args.non_interactive or (" ".join(args.task) if args.task else None)
     verbose = args.verbose
@@ -124,6 +142,11 @@ def main():
     if args.list_sessions:
         print(session_manager.format_session_list())
         return
+
+    # Initialize skill manager lazily (only needed for interactive/task mode)
+    from atom.skills import SkillManager
+    skill_manager = SkillManager(config.project_root)
+    set_skill_manager(skill_manager)
 
     if task:
         session_info = session_manager.create_session(description=task[:50])
@@ -259,6 +282,10 @@ def _handle_model_change(sentinel: str, config, session_manager):
 
         provider_display = new_provider or config.provider
         print(f"  {_BOLD}Model switched to: {new_model}{_RESET} (provider: {provider_display})")
+
+        # Persist model choice to settings.json
+        _persist_model_to_settings(new_model, config.project_root)
+
         return agent
     except Exception as e:
         # Rollback
@@ -269,9 +296,27 @@ def _handle_model_change(sentinel: str, config, session_manager):
         return None
 
 
+def _persist_model_to_settings(model_name: str, project_root: str):
+    """Save selected model to .atom/settings.json so it persists across sessions."""
+    import json
+    from pathlib import Path
+    settings_path = Path(project_root) / ".atom" / "settings.json"
+    if settings_path.exists():
+        try:
+            with open(settings_path) as f:
+                data = json.load(f)
+            data["model"] = model_name
+            with open(settings_path, "w") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+        except (json.JSONDecodeError, OSError):
+            pass
+
+
 def _stream_with_hitl(agent, user_input: str, config: dict, auto_approve: bool = False,
                       verbose: bool = False, handler=None):
     """Stream agent response with HITL interrupt handling and live status dashboard."""
+    _ensure_imports()
     from atom.orchestrator import set_tracker, set_pane_manager, RenderThread
     from atom.pane import PaneManager
     from atom.hotkey import HotkeyListener
@@ -360,71 +405,139 @@ def _stream_with_hitl(agent, user_input: str, config: dict, auto_approve: bool =
 
 
 def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbose: bool = False) -> list | None:
-    """Stream agent response. Dashboard is rendered by background RenderThread."""
+    """Stream agent response with token-level AI text streaming.
 
-    # Collect IDs of messages already in state to avoid reprinting them
-    seen_msg_ids: set[str] = set()
-    try:
-        state = agent.get_state(config)
-        for msg in state.values.get("messages", []):
-            msg_id = getattr(msg, "id", None)
-            if msg_id:
-                seen_msg_ids.add(msg_id)
-    except Exception:
-        pass
+    Uses stream_mode=["messages", "updates"]:
+      - "messages": token-by-token AI text + tool call chunks (real-time output)
+      - "updates": node-level outputs for tool results, todos, diffs
+    """
 
     got_ai_response = False
     event_count = 0
     had_error = False
     ai_header_printed = False
+    streaming_ai_id: str | None = None  # Track which AI message is being streamed
+
+    def _clear_and_print(text: str, **kwargs):
+        """Clear dashboard and print below it."""
+        with tracker._lock:
+            tracker._clear_previous()
+            tracker._last_panel_lines = 0
+            _safe_print(text, flush=True, **kwargs)
+            tracker._mark_dirty()
 
     try:
-        for event in agent.stream(input_payload, config=config, stream_mode="updates"):
+        for event in agent.stream(input_payload, config=config, stream_mode=["messages", "updates"]):
             event_count += 1
-            for node_name, node_output in event.items():
-                if verbose:
-                    out_keys = list(node_output.keys()) if isinstance(node_output, dict) else type(node_output).__name__
-                    _safe_print(f"{_DIM}  [debug] node={node_name} keys={out_keys}{_RESET}", flush=True)
 
-                if not isinstance(node_output, dict):
-                    continue
+            # Multi-mode events are 2-tuples: (mode, data)
+            if not isinstance(event, tuple) or len(event) != 2:
+                continue
+            mode, data = event
 
-                # Track todo updates from state
-                todos_in_state = node_output.get("todos")
-                if todos_in_state is not None:
-                    tracker.on_todos_updated(
-                        [t if isinstance(t, dict) else {"content": str(t), "status": "pending"} for t in todos_in_state]
-                    )
+            # ── "messages" mode: token-by-token streaming ──
+            if mode == "messages":
+                msg_chunk, _metadata = data
+                msg_type = getattr(msg_chunk, "type", None)
 
-                raw_messages = node_output.get("messages")
-                if raw_messages is None:
-                    continue
+                # AI token streaming
+                if msg_type in ("ai", "AIMessageChunk"):
+                    content = getattr(msg_chunk, "content", "")
+                    tool_call_chunks = getattr(msg_chunk, "tool_call_chunks", [])
 
-                if hasattr(raw_messages, "value"):
-                    messages = raw_messages.value
-                elif isinstance(raw_messages, list):
-                    messages = raw_messages
-                else:
-                    continue
+                    # Text content — stream token by token
+                    if content:
+                        text = content if isinstance(content, str) else ""
+                        if isinstance(content, list):
+                            text = "".join(
+                                b.get("text", "") if isinstance(b, dict) else str(b)
+                                for b in content
+                            )
+                        if text:
+                            got_ai_response = True
+                            with tracker._lock:
+                                tracker._got_ai_text = True
+                                tracker._clear_previous()
+                                tracker._last_panel_lines = 0
+                                if not ai_header_printed:
+                                    _safe_print(f"{_DIM}● > {_RESET}", end="", flush=True)
+                                    ai_header_printed = True
+                                    streaming_ai_id = getattr(msg_chunk, "id", None)
+                                _safe_print(text, end="", flush=True)
+                                tracker._mark_dirty()
 
-                for msg in messages:
-                    msg_type = getattr(msg, "type", None)
-                    msg_id = getattr(msg, "id", None) or id(msg)
-                    if msg_id in seen_msg_ids:
+                    # Tool call chunks — mark as active (but don't track args here;
+                    # messages mode sends args as partial JSON strings, not dicts.
+                    # Full args are captured from the "updates" stream below.)
+                    if tool_call_chunks:
+                        got_ai_response = True
+
+                # Tool result messages — handle diffs and errors
+                elif msg_type == "tool":
+                    name = getattr(msg_chunk, "name", "tool")
+                    tool_content = sanitize_text(str(getattr(msg_chunk, "content", "")))
+                    tool_call_id = getattr(msg_chunk, "tool_call_id", None)
+                    tracker.on_tool_end(name, tool_content[:200])
+
+                    # End previous AI streaming line
+                    if ai_header_printed and streaming_ai_id:
+                        ai_header_printed = False
+                        streaming_ai_id = None
+                        _safe_print("", flush=True)  # newline
+
+                    is_error = "error" in tool_content.lower()[:100]
+
+                    if tool_call_id and tool_call_id in _pending_file_ops and not is_error:
+                        op = _pending_file_ops.pop(tool_call_id)
+                        diff_text = format_file_diff(op["name"], op.get("args", {}), op.get("start_line"))
+                        if diff_text:
+                            _clear_and_print(diff_text)
+                    elif verbose or is_error:
+                        display = tool_content[:500 if verbose else 300]
+                        color = _MAGENTA if verbose else _RED
+                        prefix = f"  <- {name}:" if verbose else f"  [error] {name}:"
+                        _clear_and_print(f"{color}{prefix} {display}{_RESET}")
+
+                continue
+
+            # ── "updates" mode: node-level outputs (todos, full tool args) ──
+            if mode == "updates" and isinstance(data, dict):
+                for node_name, node_output in data.items():
+                    if verbose:
+                        out_keys = list(node_output.keys()) if isinstance(node_output, dict) else type(node_output).__name__
+                        _safe_print(f"{_DIM}  [debug] node={node_name} keys={out_keys}{_RESET}", flush=True)
+
+                    if not isinstance(node_output, dict):
                         continue
-                    seen_msg_ids.add(msg_id)
 
-                    if msg_type == "ai":
-                        tool_calls = getattr(msg, "tool_calls", [])
-                        for tc in tool_calls:
-                            tracker.on_tool_start(tc.get("name", "unknown"), tc.get("args", {}))
-                            # Capture file operations for diff display
-                            tc_name = tc.get("name", "")
-                            if tc_name in ("edit_file", "write_file"):
+                    # Track todo updates from state
+                    todos_in_state = node_output.get("todos")
+                    if todos_in_state is not None:
+                        tracker.on_todos_updated(
+                            [t if isinstance(t, dict) else {"content": str(t), "status": "pending"} for t in todos_in_state]
+                        )
+
+                    # Process complete messages from updates (tool calls with full args for diffs)
+                    raw_messages = node_output.get("messages")
+                    if raw_messages is None:
+                        continue
+                    if hasattr(raw_messages, "value"):
+                        messages = raw_messages.value
+                    elif isinstance(raw_messages, list):
+                        messages = raw_messages
+                    else:
+                        continue
+
+                    for msg in messages:
+                        msg_type = getattr(msg, "type", None)
+                        if msg_type == "ai":
+                            tool_calls = getattr(msg, "tool_calls", [])
+                            for tc in tool_calls:
+                                tc_name = tc.get("name", "")
                                 tc_id = tc.get("id")
-                                if tc_id:
+                                # Store full args for diff display (messages mode only has chunks)
+                                if tc_name in ("edit_file", "write_file") and tc_id:
                                     op_args = tc.get("args", {})
-                                    # For edit_file, capture line number before the edit happens
                                     line_num = None
                                     if tc_name == "edit_file":
                                         line_num = find_line_number(
@@ -436,52 +549,8 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
                                         "args": op_args,
                                         "start_line": line_num,
                                     }
-
-                        # Model is working if it produces tool calls OR text
-                        if tool_calls:
-                            got_ai_response = True
-
-                        content = msg.content
-                        if content:
-                            text = _extract_text(content)
-                            if text:
+                            if tool_calls:
                                 got_ai_response = True
-                                with tracker._lock:
-                                    tracker._got_ai_text = True
-                                    tracker._clear_previous()
-                                    tracker._last_panel_lines = 0
-                                    if not ai_header_printed:
-                                        _safe_print(f"{_DIM}● > {_RESET}", end="", flush=True)
-                                        ai_header_printed = True
-                                    _safe_print(text, flush=True)
-                                    tracker._mark_dirty()
-
-                    elif msg_type == "tool":
-                        name = getattr(msg, "name", "tool")
-                        tool_content = sanitize_text(str(msg.content))
-                        tool_call_id = getattr(msg, "tool_call_id", None)
-                        tracker.on_tool_end(name, tool_content[:200])
-
-                        # Show diff for file operations
-                        is_error = "error" in tool_content.lower()[:100]
-                        if tool_call_id and tool_call_id in _pending_file_ops and not is_error:
-                            op = _pending_file_ops.pop(tool_call_id)
-                            diff_text = format_file_diff(op["name"], op["args"], op.get("start_line"))
-                            if diff_text:
-                                with tracker._lock:
-                                    tracker._clear_previous()
-                                    tracker._last_panel_lines = 0
-                                    _safe_print(diff_text, flush=True)
-                                    tracker._mark_dirty()
-                        elif verbose or is_error:
-                            display = tool_content[:500 if verbose else 300]
-                            color = _MAGENTA if verbose else _RED
-                            prefix = f"  <- {name}:" if verbose else f"  [error] {name}:"
-                            with tracker._lock:
-                                tracker._clear_previous()
-                                tracker._last_panel_lines = 0
-                                _safe_print(f"{color}{prefix} {display}{_RESET}", flush=True)
-                                tracker._mark_dirty()
 
     except Exception as e:
         with tracker._lock:
@@ -504,6 +573,10 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
         except Exception as e2:
             _safe_print(f"{_RED}[Fallback error] {sanitize_text(str(e2))}{_RESET}", flush=True)
 
+    # End streaming line if still open
+    if ai_header_printed:
+        _safe_print("", flush=True)
+
     if not got_ai_response:
         with tracker._lock:
             tracker._clear_previous()
@@ -514,7 +587,6 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
             _safe_print(f"{_YELLOW}(Got {event_count} events but no AI text — model may not support tool calling. Try --verbose){_RESET}", flush=True)
 
     # Check for pending interrupts — but NOT if we hit an error
-    # (retrying after an error like context-too-long causes infinite loops)
     if not had_error:
         try:
             state = agent.get_state(config)

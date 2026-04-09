@@ -148,10 +148,18 @@ def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
         )
         p.start()
         processes[label] = p
-        # Debug: confirm process started
-        import sys
-        sys.stderr.write(f"[orchestrator] Started process {label} (pid={p.pid})\n")
-        sys.stderr.flush()
+        if _pane_manager:
+            _pane_manager.set_pid(label, p.pid)
+
+    # Process monitor thread — detects child exit and marks panes "done"
+    # This breaks the deadlock: TUI waits for is_active=False, monitor sets it.
+    monitor_halt = threading.Event()
+    monitor = threading.Thread(
+        target=_process_monitor,
+        args=(processes, _pane_manager, _tracker, monitor_halt),
+        daemon=True,
+    )
+    monitor.start()
 
     # Run curses TUI while processes execute
     if use_curses:
@@ -168,11 +176,24 @@ def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
         finally:
             _tracker._panel_enabled = True
 
-    # Wait for processes to finish (they may already be done after curses exits)
-    for label, p in processes.items():
-        if p.is_alive():
-            p.join(timeout=60)
+    # Stop monitor
+    monitor_halt.set()
+    monitor.join(timeout=2)
 
+    # Reap all processes — they should already be dead since TUI waited for is_active=False
+    for label, p in processes.items():
+        # Join with generous timeout
+        p.join(timeout=30)
+
+        # Force kill if still alive
+        if p.is_alive():
+            p.terminate()
+            p.join(timeout=5)
+        if p.is_alive():
+            p.kill()
+            p.join(timeout=2)
+
+        # Collect result
         try:
             result = result_holders[label].get_nowait()
             results[label] = result
@@ -180,24 +201,24 @@ def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
             if label not in results:
                 results[label] = f"Process {label} did not return a result"
 
-        event_queue.put(SubagentEvent(label=label, event_type="done"))
         if _tracker:
             _tracker.on_subagent_end(label)
             _tracker.advance_plan()
-        if _pane_manager:
-            _pane_manager.complete_subagent(label)
 
-    # Cleanup — terminate stragglers and reap to prevent zombies
-    for p in processes.values():
-        if p.is_alive():
-            p.terminate()
-    for p in processes.values():
-        p.join(timeout=5)  # reap zombie processes
-        if p.is_alive():
-            p.kill()
-            p.join(timeout=2)
+        # Release process handle
+        try:
+            p.close()
+        except (ValueError, OSError):
+            pass
+
+    # Stop collector and drain queue
     collector_halt.set()
-    collector.join(timeout=2)
+    collector.join(timeout=3)
+    try:
+        while not event_queue.empty():
+            event_queue.get_nowait()
+    except Exception:
+        pass
 
     # Print summary after curses exits
     if _pane_manager:
@@ -208,6 +229,32 @@ def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
         _pane_manager.clear()
 
     return results
+
+
+def _process_monitor(
+    processes: dict[str, mp.Process],
+    pane_manager: PaneManager | None,
+    tracker,
+    halt: threading.Event,
+):
+    """Monitor thread: detect child process exit → mark panes done → TUI can exit.
+
+    This solves the deadlock where TUI waits for is_active=False but
+    complete_subagent() was only called after TUI exit.
+    """
+    reaped: set[str] = set()
+    while not halt.is_set():
+        for label, p in processes.items():
+            if label in reaped:
+                continue
+            if not p.is_alive():
+                reaped.add(label)
+                if pane_manager:
+                    pane_manager.complete_subagent(label)
+        # All done? Stop polling.
+        if len(reaped) == len(processes):
+            break
+        halt.wait(0.3)
 
 
 # ─── Worker process ───
@@ -230,6 +277,20 @@ def _worker_process(
         result_queue.put(result)
     except Exception as e:
         result_queue.put(SubagentResult(final_text=f"Process error: {e}"))
+    finally:
+        # Flush result_queue so parent can read the result
+        try:
+            result_queue.close()
+            result_queue.join_thread()
+        except Exception:
+            pass
+        # Prevent event_queue from blocking exit
+        try:
+            event_queue.cancel_join_thread()
+        except Exception:
+            pass
+        # Force immediate exit — LangGraph internal threads can hang on normal exit
+        os._exit(0)
 
 
 TASK_AGENT_PROMPT = """You are Atom, a task-focused coding agent. You execute a single assigned task directly and efficiently.
@@ -335,7 +396,9 @@ def _run_subagent_in_process(
                             tc_args = tc.get("args", {})
                             # Emit verbose tool info: name + key arg summary
                             tool_summary = _format_tool_brief(tc_name, tc_args)
-                            emit("tool_start", name=tc_name, summary=tool_summary)
+                            # Pass key args so status tracker can show file names
+                            emit("tool_start", name=tc_name, summary=tool_summary,
+                                 args=_extract_key_args(tc_name, tc_args))
                             result.tools_used.append({"name": tc_name})
 
                             if tc_name in ("edit_file", "write_file"):
@@ -388,6 +451,15 @@ def _run_subagent_in_process(
     return result
 
 
+def _extract_key_args(name: str, args: dict) -> dict:
+    """Extract only the essential args for status tracking (avoids serializing large content)."""
+    if name in ("write_file", "edit_file", "read_file"):
+        return {"file_path": args.get("file_path", args.get("path", ""))}
+    if name == "execute":
+        return {"command": args.get("command", "")[:80]}
+    return {}
+
+
 def _format_tool_brief(name: str, args: dict) -> str:
     """Format a short summary of tool call for verbose display."""
     if name in ("write_file", "edit_file", "read_file"):
@@ -412,7 +484,7 @@ def _event_collector(event_queue: mp.Queue, halt: threading.Event):
     """Single thread that consumes events from child processes."""
     while not halt.is_set():
         try:
-            event = event_queue.get(timeout=0.1)
+            event = event_queue.get(timeout=0.02)
         except (queue.Empty, EOFError):
             continue
 
