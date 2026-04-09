@@ -197,6 +197,9 @@ def create_totoro_agent(config: AgentConfig):
     Returns:
         tuple: (agent, checkpointer, store, auto_dream_extractor)
     """
+    global _api_timeout
+    _api_timeout = config.loop.api_timeout_seconds
+
     checkpointer = _create_checkpointer()
     store = InMemoryStore()
 
@@ -360,6 +363,7 @@ def _resolve_model(model_name: str, provider: str = "auto"):
 
 # Resolved provider from last _resolve_model call (used by orchestrator to skip re-detection)
 _resolved_provider: str = "auto"
+_api_timeout: int = 60  # Set from config in create_totoro_agent
 
 
 def _make_openrouter(model_name: str):
@@ -375,7 +379,7 @@ def _make_openrouter(model_name: str):
         model=model_name,
         openai_api_key=key,
         openai_api_base=os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
-        request_timeout=60,
+        request_timeout=_api_timeout,
     )
 
 
@@ -384,7 +388,7 @@ def _make_anthropic(model_name: str):
     if not key:
         return None
     from langchain_anthropic import ChatAnthropic
-    return ChatAnthropic(model_name=model_name, api_key=key, timeout=60)
+    return ChatAnthropic(model_name=model_name, api_key=key, timeout=_api_timeout)
 
 
 def _make_openai(model_name: str):
@@ -392,7 +396,7 @@ def _make_openai(model_name: str):
     if not key:
         return None
     from langchain_openai import ChatOpenAI
-    return ChatOpenAI(model=model_name, openai_api_key=key, request_timeout=60)
+    return ChatOpenAI(model=model_name, openai_api_key=key, request_timeout=_api_timeout)
 
 
 def _make_vllm(model_name: str):
@@ -404,7 +408,7 @@ def _make_vllm(model_name: str):
         model=model_name,
         openai_api_key=os.environ.get("VLLM_API_KEY", "EMPTY"),
         openai_api_base=base_url,
-        request_timeout=60,
+        request_timeout=_api_timeout,
     )
 
 
