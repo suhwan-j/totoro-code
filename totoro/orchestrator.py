@@ -239,7 +239,11 @@ def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
         label = f"{agent_type}-{i}"
 
         # Route to character-specific config
-        cfg = config_map.get(agent_type) or config_map.get("satsuki")
+        cfg = config_map.get(agent_type)
+        if cfg is None:
+            import sys as _sys
+            print(f"  [warn] Unknown agent type '{agent_type}', falling back to satsuki", file=_sys.stderr, flush=True)
+            cfg = config_map.get("satsuki")
         if cfg is None:
             cfg = {"name": "susuwatari", "system_prompt": "You are Susuwatari, a micro agent. Execute the task directly.", "description": ""}
 
