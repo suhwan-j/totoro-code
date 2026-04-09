@@ -51,14 +51,11 @@ _ENV_MAP = {
 
 _EXTRAS_ENV_MAP = {
     "tavily_api_key": "TAVILY_API_KEY",
-    "langsmith_api_key": "LANGSMITH_API_KEY",
-    "langsmith_tracing": "LANGSMITH_TRACING",
-    "langsmith_project": "LANGSMITH_PROJECT",
 }
 
 
-def run_setup_wizard(project_root: Path) -> dict:
-    """Run interactive setup wizard. Returns settings dict."""
+def run_setup_wizard(project_root: Path = None) -> dict:
+    """Run interactive setup wizard. Saves to ~/.totoro/settings.json."""
     print()
     print(f"  {_DIM}╭─────────────────────────────────────╮{_RESET}")
     print(f"  {_DIM}│  {ACCENT}Totoro Setup{_DIM}                         │{_RESET}")
@@ -66,7 +63,7 @@ def run_setup_wizard(project_root: Path) -> dict:
     print()
 
     # Load existing settings for defaults
-    existing = load_provider_settings(project_root)
+    existing = load_provider_settings()
 
     # 1. Select provider
     provider = _select_provider(existing)
@@ -92,10 +89,10 @@ def run_setup_wizard(project_root: Path) -> dict:
         settings["extras"] = extras
 
     # Save
-    save_settings(settings, project_root)
+    save_settings(settings)
 
     print()
-    print(f"  {_GREEN}✓{_RESET} Saved to {_BOLD}.totoro/settings.json{_RESET}")
+    print(f"  {_GREEN}✓{_RESET} Saved to {_BOLD}~/.totoro/settings.json{_RESET}")
     print()
 
     return settings
@@ -214,17 +211,27 @@ def _select_model(provider: str, existing: dict | None) -> str | None:
     print(f"    {_BOLD}c){_RESET} {_DIM}Custom model ID...{_RESET}")
     print()
 
+    # Find default: current model or first in list
+    default_model = models[0][0]
+    default_idx = 1
+    if current:
+        for i, (m, _, _) in enumerate(models, 1):
+            if m == current:
+                default_model = m
+                default_idx = i
+                break
+
+    # Show default hint in the prompt label, not inline
+    default_name = models[default_idx - 1][1]
+    print(f"  {_DIM}(Enter for default: {default_name}){_RESET}")
+
     while True:
         try:
-            default_hint = ""
-            if current:
-                idx = next((i for i, (m, _, _) in enumerate(models, 1) if m == current), None)
-                if idx:
-                    default_hint = f" [{idx}]"
-            choice = input(f"  > {default_hint and f'{_DIM}{default_hint}{_RESET} '}").strip()
+            choice = input("  > ").strip()
 
-            if not choice and current:
-                return current
+            if not choice:
+                print(f"  {_GREEN}✓{_RESET} {default_model}")
+                return default_model
 
             if choice.lower() == "c":
                 print(f"\n  Enter custom model ID:")
@@ -270,37 +277,12 @@ def _configure_extras(existing: dict | None) -> dict:
     elif current_tavily:
         extras["tavily_api_key"] = current_tavily
 
-    # LangSmith
-    current_ls = existing_extras.get("langsmith_api_key")
-    try:
-        prompt = f"\n  Configure LangSmith tracing? {_DIM}[y/N]{_RESET} "
-        if current_ls:
-            prompt = f"\n  Update LangSmith config? {_DIM}(current: {current_ls[:8]}...){_RESET} {_DIM}[y/N]{_RESET} "
-        answer = input(prompt).strip().lower()
-    except (EOFError, KeyboardInterrupt):
-        answer = "n"
-
-    if answer in ("y", "yes"):
-        try:
-            key = getpass.getpass(prompt="  LangSmith API key > ")
-            if key.strip():
-                extras["langsmith_api_key"] = key.strip()
-                extras["langsmith_tracing"] = True
-                project = input(f"  LangSmith project name {_DIM}[TOTORO-CODE]{_RESET} > ").strip()
-                extras["langsmith_project"] = project if project else "TOTORO-CODE"
-        except (EOFError, KeyboardInterrupt):
-            pass
-    elif current_ls:
-        extras["langsmith_api_key"] = current_ls
-        extras["langsmith_tracing"] = existing_extras.get("langsmith_tracing", True)
-        extras["langsmith_project"] = existing_extras.get("langsmith_project", "TOTORO-CODE")
-
     return extras
 
 
-def save_settings(settings: dict, project_root: Path):
-    """Save settings to .totoro/settings.json."""
-    totoro_dir = project_root / ".totoro"
+def save_settings(settings: dict, project_root: Path = None):
+    """Save settings to ~/.totoro/settings.json."""
+    totoro_dir = Path.home() / ".totoro"
     totoro_dir.mkdir(parents=True, exist_ok=True)
 
     settings_path = totoro_dir / "settings.json"
@@ -322,9 +304,9 @@ def save_settings(settings: dict, project_root: Path):
         f.write("\n")
 
 
-def load_provider_settings(project_root: Path) -> dict | None:
-    """Load settings from .totoro/settings.json. Returns None if not found."""
-    settings_path = project_root / ".totoro" / "settings.json"
+def load_provider_settings(project_root: Path = None) -> dict | None:
+    """Load settings from ~/.totoro/settings.json. Returns None if not found."""
+    settings_path = Path.home() / ".totoro" / "settings.json"
     if not settings_path.exists():
         return None
     try:

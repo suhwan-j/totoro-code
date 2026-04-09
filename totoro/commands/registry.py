@@ -328,7 +328,7 @@ def _cmd_memory(args, agent, config) -> str:
         return "Memory extraction not available (Auto-Dream not configured)."
 
     if args.strip() == "clear":
-        _auto_dream._memories.clear()
+        _auto_dream.clear()
         return "All memories cleared."
 
     return _auto_dream.format_memories_display()
@@ -472,8 +472,8 @@ def _cmd_status(args, agent, config) -> str:
 
     # Memory count
     if _auto_dream:
-        mem_count = len(_auto_dream.get_memories())
-        lines.append(f"  Memories: {mem_count}")
+        mem_count = _auto_dream.get_memory_count()
+        lines.append(f"  Memories: {mem_count} (persistent)")
 
     # Session manager info
     if _session_manager:

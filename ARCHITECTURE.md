@@ -158,24 +158,18 @@ totoro-code/
 
 ```python
 # totoro/core/agent.py
-from deepagents import create_deep_agent
-from deepagents.backends import (
-    CompositeBackend,
-    StateBackend,
-    StoreBackend,
-    FilesystemBackend,
-)
+from deepagents import create_deep_agent, SubAgent
+from deepagents.backends import LocalShellBackend
 from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.store.memory import InMemoryStore
-# from langgraph.checkpoint.postgres import PostgresSaver  # 프로덕션
-# from langgraph.store.postgres import PostgresStore        # 프로덕션
 
-from totoro.tools.git import git_tool
-from totoro.tools.bash import bash_tool
-from totoro.tools.web_search import web_search_tool
-from totoro.tools.fetch_url import fetch_url_tool
-from totoro.tools.ask_user import ask_user_tool
+from totoro.tools import git_tool, web_search_tool, fetch_url_tool, ask_user_tool
 from totoro.config.schema import AgentConfig
+from totoro.core.models import create_lightweight_model
+from totoro.layers.sanitize import SanitizeMiddleware
+from totoro.layers.stall_detector import StallDetectorMiddleware
+from totoro.layers.auto_dream import AutoDreamExtractor, AutoDreamMiddleware
 
 
 def create_totoro_agent(config: AgentConfig):
@@ -189,142 +183,127 @@ def create_totoro_agent(config: AgentConfig):
     - HITL (interrupt_on → Command(resume=...))
 
     TOTORO-CODE가 추가하는 것:
-    - 커스텀 도구: git, bash, web_search, fetch_url, ask_user
+    - 커스텀 도구: git, web_search, fetch_url, ask_user, orchestrate
     - 서브에이전트 타입 정의 (explorer, coder, researcher, reviewer, planner)
-    - CompositeBackend 구성 (/memories/ → StoreBackend)
+    - LocalShellBackend 구성
     - interrupt_on 설정 (파괴적 도구에 HITL 적용)
-    - 스킬 디렉토리 설정
+    - 스킬 디렉토리 설정 (built-in/skills/, ~/.totoro/skills/, .totoro/skills/)
+
+    Returns:
+        tuple: (agent, checkpointer, store, auto_dream_extractor)
     """
+
+    # ─── 체크포인터 + 스토어 ───
+    checkpointer = _create_checkpointer()  # SqliteSaver at ~/.totoro/checkpoints.db
+    store = InMemoryStore()
+
+    # ─── 시스템 프롬프트 + 모델 ───
+    system_prompt = _build_system_prompt(config)
+    model = _resolve_model(config.model, config.provider)
+
+    # ─── 서브에이전트 등록 (오케스트레이터용) ───
+    _build_orchestrator_subagents(model, config)
 
     # ─── 커스텀 도구 조립 ───
     # 프레임워크 내장 도구(write_todos, ls, read_file, write_file, edit_file,
     # glob, grep, task)는 자동 포함되므로 여기에 추가하지 않는다.
-    custom_tools = [
-        git_tool,
-        bash_tool,
-        web_search_tool,
-        fetch_url_tool,
-        ask_user_tool,
-    ]
+    from totoro.orchestrator import orchestrate_tool
+    custom_tools = [git_tool, fetch_url_tool, ask_user_tool, orchestrate_tool]
+    if os.environ.get("TAVILY_API_KEY"):
+        custom_tools.append(web_search_tool)
 
-    # ─── MCP 도구 로드 (설정에 MCP 서버가 있으면) ───
-    if config.mcp and config.mcp.servers:
-        from totoro.tools.mcp.client import load_mcp_tools
-        mcp_tools = load_mcp_tools(config.mcp)
-        custom_tools.extend(mcp_tools)
+    # ─── HITL 설정 ───
+    if config.permissions.mode == "auto_approve":
+        hitl_config = None
+    else:
+        hitl_config = {
+            "execute": True,
+            "write_file": True,
+            "edit_file": True,
+            # git is excluded — it has internal safety rules that selectively
+            # interrupt only dangerous subcommands (push --force, reset --hard, etc.)
+        }
 
-    # ─── 서브에이전트 타입 선언 ───
-    # DeepAgents는 subagents를 선언적 config로 받아
-    # task 도구를 자동 생성하고 생명주기를 관리한다.
-    subagent_configs = [
-        {
-            "name": "explorer",
-            "description": "Codebase exploration and structure analysis",
-            "tools": ["read_file", "glob", "grep", "ls"],
-            "system_prompt": (
-                "You are a codebase explorer. Read files, search patterns, "
-                "and report findings. Never modify files."
-            ),
-        },
-        {
-            "name": "coder",
-            "description": "Code writing and modification",
-            "tools": ["read_file", "write_file", "edit_file", "glob", "grep", "ls", "bash"],
-            "system_prompt": (
-                "You are a code implementer. Write and edit code based on "
-                "the given instruction. Follow existing code style."
-            ),
-        },
-        {
-            "name": "researcher",
-            "description": "Web research and information gathering",
-            "tools": ["read_file", "glob", "grep", "ls", "web_search", "fetch_url"],
-            "system_prompt": (
-                "You are a researcher. Search the web and codebase to gather "
-                "information. Summarize findings clearly."
-            ),
-        },
-        {
-            "name": "reviewer",
-            "description": "Code review (read-only, no test execution)",
-            "tools": ["read_file", "glob", "grep", "ls"],
-            "system_prompt": (
-                "You are a code reviewer. Read code, find bugs, suggest improvements. "
-                "Report findings in a structured format."
-            ),
-        },
-        {
-            "name": "planner",
-            "description": "Plan formulation and task breakdown",
-            "tools": ["read_file", "glob", "grep", "ls", "write_todos"],
-            "system_prompt": (
-                "You are a task planner. Analyze the request, break it into "
-                "sub-tasks, and create a structured todo list."
-            ),
-        },
-    ]
+    # ─── 커스텀 미들웨어 스택 ───
+    custom_middleware, auto_dream = _build_custom_middleware(config, store)
 
-    # ─── 체크포인터 + 스토어 ───
-    checkpointer = MemorySaver()        # 개발용 (인메모리)
-    store = InMemoryStore()             # 개발용 (인메모리)
-    # checkpointer = PostgresSaver(...)  # 프로덕션
-    # store = PostgresStore(...)         # 프로덕션
-
-    # ─── 시스템 프롬프트 조립 ───
-    system_prompt = _build_system_prompt(config)
+    # ─── 스킬 경로 탐색 ───
+    from totoro.skills import SkillManager
+    skill_mgr = SkillManager(config.project_root)
+    skill_paths = skill_mgr.get_skill_paths() or None
 
     # ─── 에이전트 생성 ───
     agent = create_deep_agent(
         name="totoro",
-        model=config.model,                  # "claude-sonnet-4-5-20250929"
+        model=model,
         tools=custom_tools,
         system_prompt=system_prompt,
-        subagents=subagent_configs,
-        backend=lambda rt: CompositeBackend(
-            StateBackend(rt),                # 기본: 세션 내 임시 상태
-            {
-                "/memories/": StoreBackend(rt),       # 장기 메모리 (persistent)
-                "/project/": StoreBackend(rt),        # 프로젝트별 메모리
-                "/workspace/": FilesystemBackend(rt), # 디스크 파일
-            },
+        skills=skill_paths,
+        # subagents are managed by orchestrate_tool (parallel),
+        # not framework's task tool (sequential)
+        backend=LocalShellBackend(
+            root_dir=config.project_root,
+            virtual_mode=False,
+            inherit_env=True,
         ),
-        interrupt_on={
-            "write_file": True,
-            "edit_file": True,
-            "bash": True,
-            # git is excluded — it has internal safety rules that selectively
-            # interrupt only dangerous subcommands (push --force, reset --hard, etc.)
-        },
-        skills=["./skills/"],                # SKILL.md 포맷 스킬 디렉토리
+        interrupt_on=hitl_config,
         checkpointer=checkpointer,
         store=store,
-        middleware=[_build_custom_middleware(config, store)],
+        middleware=custom_middleware,
     )
 
-    return agent
+    return agent, checkpointer, store, auto_dream
+
+
+def _create_checkpointer():
+    """Create a SqliteSaver checkpointer at ~/.totoro/checkpoints.db.
+
+    Falls back to MemorySaver if SQLite setup fails.
+    """
+    try:
+        import sqlite3
+        db_dir = Path.home() / ".totoro"
+        db_dir.mkdir(parents=True, exist_ok=True)
+        db_path = db_dir / "checkpoints.db"
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        saver = SqliteSaver(conn)
+        saver.setup()
+        return saver
+    except Exception as e:
+        import sys
+        from totoro.colors import DIM, RESET
+        print(f"{DIM}  [warn] SQLite checkpointer failed ({e}), using in-memory{RESET}",
+              file=sys.stderr)
+        return MemorySaver()
 
 
 def _build_system_prompt(config: AgentConfig) -> str:
-    """시스템 프롬프트 조립"""
+    """시스템 프롬프트 조립
+
+    Order: static content first (cacheable prefix), dynamic content last.
+    This maximizes prefix KV cache hits on vLLM (--enable-prefix-caching)
+    and Anthropic (cache_control ephemeral).
+    """
     sections = []
 
-    # 1. 핵심 행동 규칙
+    # 1. 핵심 행동 규칙 (static, cacheable)
     sections.append(CORE_SYSTEM_PROMPT)
 
-    # 2. 환경 정보
+    # 2. AGENTS.md (프로젝트 규칙)
+    agents_md = _load_agents_md(config.project_root)
+    if agents_md:
+        if len(agents_md) > 16000:
+            agents_md = agents_md[:16000] + "\n... (truncated)"
+        sections.append(f"# Project Rules (AGENTS.md)\n{agents_md}")
+
+    # 3. 환경 정보 (dynamic suffix)
     from datetime import datetime
     sections.append(f"""
 # Environment
-- Working directory: {config.project_root}
-- Current date: {datetime.now().isoformat()}
-""")
-
-    # 3. AGENTS.md (프로젝트 규칙)
-    agents_md = _load_agents_md(config.project_root)
-    if agents_md:
-        sections.append(f"""
-# Project Rules (AGENTS.md)
-{agents_md}
+- Working directory: {Path(config.project_root).resolve()}
+- Current date: {datetime.now().strftime('%Y-%m-%d')}
+- Model: {config.model}
+- Provider: {config.provider}
 """)
 
     return "\n\n".join(sections)
@@ -332,7 +311,7 @@ def _build_system_prompt(config: AgentConfig) -> str:
 
 # 핵심 시스템 프롬프트 (하드코딩)
 CORE_SYSTEM_PROMPT = """
-You are TOTORO-CODE, a CLI coding agent. You help users with software development tasks
+You are Totoro, an advanced CLI coding agent. You help users with software development tasks
 by reading, writing, and editing code, running commands, searching the web,
 and managing git repositories.
 
@@ -341,8 +320,10 @@ Key behaviors:
 - Use edit_file for targeted changes, write_file only for new files or complete rewrites
 - Never commit without explicit user request
 - Never run destructive git commands (push --force, reset --hard) without user approval
-- Use task to delegate sub-tasks to specialized sub-agents when beneficial
+- Use orchestrate_tool to delegate sub-tasks to specialized sub-agents in parallel
 - Use ask_user when you need clarification or approval
+- Your FIRST tool call MUST be write_todos for any non-trivial task
+- ALWAYS use orchestrate_tool for file operations — delegate, do not write files directly
 """.strip()
 ```
 
@@ -789,7 +770,7 @@ from totoro.commands.registry import parse_slash_command
 
 def run_interactive(config: AgentConfig):
     """대화형 모드 메인 루프 (동기 — 스트리밍 출력)"""
-    agent = create_totoro_agent(config)
+    agent, checkpointer, store, auto_dream = create_totoro_agent(config)
     session_id = f"session-{int(time.time())}"
     invoke_config = {"configurable": {"thread_id": session_id}}
 
@@ -912,7 +893,7 @@ def _do_stream(agent, input_payload: dict, config: dict):
 
 def run_non_interactive(config: AgentConfig, task: str):
     """비대화형 모드 (스트리밍 출력)"""
-    agent = create_totoro_agent(config)
+    agent, checkpointer, store, auto_dream = create_totoro_agent(config)
     config_dict = {"configurable": {"thread_id": f"task-{hash(task)}"}}
     _stream_with_hitl(agent, task, config_dict)
 
@@ -922,16 +903,17 @@ def main():
     parser = argparse.ArgumentParser(description="TOTORO-CODE CLI Agent")
     parser.add_argument("-n", "--non-interactive", type=str, help="Run single task")
     parser.add_argument("--resume", type=str, help="Resume session by ID")
+    parser.add_argument("--setup", action="store_true", help="Run setup wizard")
     args = parser.parse_args()
 
-    ensure_api_keys()
+    ensure_api_keys(force_setup=getattr(args, 'setup', False))
     config = load_config()
 
     if args.non_interactive:
         run_non_interactive(config, args.non_interactive)
     elif args.resume:
         from totoro.session.restore import restore_session
-        agent = create_totoro_agent(config)
+        agent, checkpointer, store, auto_dream = create_totoro_agent(config)
         restore_session(agent, args.resume)
     else:
         run_interactive(config)
@@ -964,55 +946,42 @@ TOTORO-CODE의 커스텀 레이어(Stall Detection, Context Compaction, Auto-Dre
 ```python
 # totoro/core/agent.py — create_totoro_agent() 내부에서 커스텀 미들웨어 구성
 
-from totoro.layers.stall_detector import StallDetector
+from totoro.layers.sanitize import SanitizeMiddleware
+from totoro.layers.stall_detector import StallDetectorMiddleware
 from totoro.layers.context_compaction import ContextCompactor
-from totoro.layers.auto_dream import AutoDreamExtractor
+from totoro.layers.auto_dream import AutoDreamExtractor, AutoDreamMiddleware
+from totoro.core.models import create_lightweight_model
 
 
 def _build_custom_middleware(config, store):
-    """TOTORO-CODE 커스텀 레이어를 DeepAgents 미들웨어 훅으로 통합"""
+    """TOTORO-CODE 커스텀 레이어를 DeepAgents 미들웨어 훅으로 통합
 
-    stall_detector = StallDetector(config)
-    compactor = ContextCompactor(config)
-    auto_dream = AutoDreamExtractor(
-        model=_create_lightweight_model(config.fallback_model),
-        store=store,
-    )
+    Returns:
+        tuple: (middleware_list, auto_dream_extractor)
+    """
+    middleware_list = []
 
-    class SdsAxMiddleware:
-        """DeepAgents 미들웨어 훅 인터페이스 구현"""
+    # 0. Sanitize — MUST be first: strips surrogate chars before API serialization
+    middleware_list.append(SanitizeMiddleware())
 
-        async def before_model(self, state, config):
-            """LLM 호출 전: 컨텍스트 사용률 확인 → 컴팩션"""
-            compacted = compactor.check_and_compact(
-                state["messages"],
-                model_context_window=200_000,
-            )
-            if compacted is not None:
-                return {"messages": compacted}
-            return None
+    # 1. Stall Detection — after_model hook
+    if config.loop.stall_detection:
+        middleware_list.append(StallDetectorMiddleware(
+            max_empty_turns=3,
+        ))
 
-        async def after_model(self, state, response, config):
-            """LLM 응답 후: Stall Detection"""
-            recovery = stall_detector.check(response)
-            if recovery:
-                return recovery  # {"action": "inject_message", ...} or {"action": "stop"}
-            return None
+    # 2. Auto-Dream Memory — after_model hook
+    auto_dream = None
+    if config.memory.auto_extract:
+        lightweight_model = create_lightweight_model(config.fallback_model)
+        auto_dream = AutoDreamExtractor(
+            model=lightweight_model,
+            store=store,
+            config=config,
+        )
+        middleware_list.append(AutoDreamMiddleware(auto_dream))
 
-        async def wrap_tool_call(self, tool_call, config):
-            """도구 실행 전: allow/deny 규칙 적용"""
-            permissions = config.get("configurable", {}).get("permissions", {})
-            return _apply_permission_rules(tool_call, permissions)
-
-        async def after_agent(self, state, config):
-            """에이전트 턴 완료: Auto-Dream 메모리 추출"""
-            token_count = sum(len(str(getattr(m, "content", ""))) // 4
-                             for m in state.get("messages", []))
-            tool_count = sum(1 for m in state.get("messages", [])
-                            if hasattr(m, "tool_call_id"))
-            await auto_dream.maybe_extract(state["messages"], token_count, tool_count)
-
-    return SdsAxMiddleware()
+    return middleware_list, auto_dream
 
 
 def _apply_permission_rules(tool_call, permissions):
@@ -1044,7 +1013,7 @@ def _apply_permission_rules(tool_call, permissions):
 ```python
 agent = create_deep_agent(
     ...
-    middleware=[_build_custom_middleware(config, store)],
+    middleware=custom_middleware,
 )
 ```
 
@@ -1052,10 +1021,11 @@ agent = create_deep_agent(
 
 | 훅 | 커스텀 레이어 | 동작 |
 |------|-------------|------|
+| (first) | SanitizeMiddleware | surrogate 문자 제거 — API 직렬화 전 필수 |
 | `before_model` | ContextCompactor | 컨텍스트 70/85/95% → 압축 |
-| `after_model` | StallDetector | 빈 턴 3회 → 넛지/모델전환/ask_user/중단 |
+| `after_model` | StallDetectorMiddleware | 빈 턴 3회 → 넛지/모델전환/ask_user/중단 |
 | `wrap_tool_call` | Permission Rules | deny → 차단, allow → interrupt_on 바이패스 |
-| `after_agent` | AutoDreamExtractor | 토큰 3000+ 또는 도구 3회+ → 비차단 메모리 추출 |
+| `after_agent` | AutoDreamMiddleware | 토큰 5000+ 또는 도구 3회+ → 비차단 메모리 추출 |
 
 ---
 
@@ -1200,9 +1170,10 @@ class AutoDreamExtractor:
     Return empty array [] if nothing to extract.
     """
 
-    def __init__(self, model, store):
+    def __init__(self, model, store, config=None):
         self._model = model       # 경량 LLM (haiku 등)
         self._store = store
+        self._config = config
         self._last_extraction_token_count = 0
         self._last_extraction_tool_count = 0
 
@@ -1213,10 +1184,14 @@ class AutoDreamExtractor:
         tool_count: int,
     ) -> None:
         """임계값 확인 후 비차단 추출 트리거"""
+        threshold = 5000
+        if self._config and hasattr(self._config, 'memory'):
+            threshold = self._config.memory.extraction_threshold_tokens
+
         token_delta = current_token_count - self._last_extraction_token_count
         tool_delta = tool_count - self._last_extraction_tool_count
 
-        if token_delta < 3000 and tool_delta < 3:
+        if token_delta < threshold and tool_delta < 3:
             return  # 임계값 미달
 
         # 비차단: fire-and-forget
@@ -1311,14 +1286,14 @@ from langgraph.types import interrupt
 from langchain_core.messages import HumanMessage
 
 
-class StallDetector:
+class StallDetectorMiddleware:
     """에이전트 멈춤 감지 및 단계적 복구"""
 
-    def __init__(self, config):
-        self._max_empty_turns = 3           # 빈 턴 감지 임계값
+    def __init__(self, max_empty_turns: int = 3, fallback_model: str = None):
+        self._max_empty_turns = max_empty_turns  # 빈 턴 감지 임계값
         self._consecutive_empty = 0
         self._recovery_stage = 0            # 0=none, 1=nudge, 2=model_switch, 3=ask, 4=stop
-        self._fallback_model = config.fallback_model
+        self._fallback_model = fallback_model
 
     def check(self, last_message) -> dict | None:
         """매 턴 후 호출. 복구 액션이 필요하면 dict 반환, 아니면 None"""
@@ -1619,7 +1594,7 @@ class MCPPermissionResolver:
 totoro --resume <session_id>
     │
     ▼
-체크포인터에서 상태 로드 (MemorySaver / PostgresSaver)
+체크포인터에서 상태 로드 (SqliteSaver at ~/.totoro/checkpoints.db)
     │
     ▼
 서브에이전트 상태 처리:
@@ -1672,8 +1647,8 @@ async def restore_session(agent, session_id: str) -> None:
 async def list_sessions(checkpointer) -> list[dict]:
     """저장된 세션 목록 조회"""
     # 체크포인터 구현에 따라 다름
+    # SqliteSaver: ~/.totoro/checkpoints.db (persistent)
     # MemorySaver: 인메모리 (프로세스 재시작 시 소멸)
-    # PostgresSaver: DB에서 조회
     sessions = []
     async for checkpoint in checkpointer.alist():
         sessions.append({
@@ -1690,18 +1665,18 @@ async def list_sessions(checkpointer) -> list[dict]:
 ```python
 # totoro/config/schema.py
 from pydantic import BaseModel, Field
-from typing import Optional, Literal
+from typing import Literal
 
 
 class PermissionConfig(BaseModel):
-    mode: Literal["default", "auto_approve", "read_only", "plan_only", "shell_confirm"] = "default"
+    mode: Literal["default", "auto_approve", "read_only", "plan_only"] = "default"
     allow: list[str] = Field(default_factory=list)
     deny: list[str] = Field(default_factory=list)
 
 
 class MemoryConfig(BaseModel):
     auto_extract: bool = True
-    extraction_threshold_tokens: int = 3000
+    extraction_threshold_tokens: int = 5000
     max_memory_entries: int = 500
 
 
@@ -1731,31 +1706,19 @@ class SandboxConfig(BaseModel):
     container_image: str = "totoro-code-sandbox:latest"
 
 
-class MCPServerConfig(BaseModel):
-    command: str                          # MCP 서버 실행 명령
-    args: list[str] = Field(default_factory=list)
-    trust_level: Literal["trusted", "untrusted", "ask"] = "untrusted"
-    tool_overrides: dict[str, dict] = Field(default_factory=dict)
-    concurrent_safe_tools: list[str] = Field(default_factory=list)
-
-
-class MCPConfig(BaseModel):
-    servers: dict[str, MCPServerConfig] = Field(default_factory=dict)
-
-
 class AgentConfig(BaseModel):
     """TOTORO-CODE 전체 설정 스키마"""
     model: str = "claude-sonnet-4-5-20250929"
     fallback_model: str = "claude-haiku-4-5-20251001"
+    provider: Literal["auto", "openrouter", "anthropic", "openai", "vllm"] = "auto"
     project_root: str = "."
 
     permissions: PermissionConfig = Field(default_factory=PermissionConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     loop: LoopConfig = Field(default_factory=LoopConfig)
-    subagents: SubagentConfig = Field(default_factory=SubagentConfig)
+    subagent: SubagentConfig = Field(default_factory=SubagentConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
-    mcp: Optional[MCPConfig] = None
 ```
 
 ### 11.2 설정 로더 (config/settings.py)
@@ -1775,24 +1738,29 @@ def load_config(
     """설정 로드 — 우선순위: CLI > 환경변수 > 프로젝트 설정 > 사용자 설정 > 기본값
 
     설정 파일 탐색 순서:
-    1. .deepagents/settings.json (프로젝트)
-    2. ~/.deepagents/settings.json (사용자 전역)
+    1. .totoro/settings.json (프로젝트)
+    2. ~/.totoro/settings.json (사용자 전역)
     """
     # 1. 기본값 (Pydantic 모델 기본값)
     config_dict = {}
 
     # 2. 사용자 전역 설정
-    user_config_path = Path.home() / ".deepagents" / "settings.json"
+    user_config_path = Path.home() / ".totoro" / "settings.json"
     if user_config_path.exists():
         with open(user_config_path) as f:
             config_dict.update(json.load(f))
 
     # 3. 프로젝트 설정
     root = Path(project_root or os.getcwd())
-    project_config_path = root / ".deepagents" / "settings.json"
+    project_config_path = root / ".totoro" / "settings.json"
     if project_config_path.exists():
         with open(project_config_path) as f:
-            config_dict.update(json.load(f))
+            proj_data = json.load(f)
+            # Filter out setup-wizard-only keys that don't belong in AgentConfig
+            for k, v in proj_data.items():
+                if k in ("api_key", "base_url", "extras"):
+                    continue
+                config_dict[k] = v
 
     # 4. 환경변수 오버라이드
     env_overrides = _load_env_overrides()
@@ -1826,8 +1794,8 @@ def _load_env_overrides() -> dict:
         overrides["fallback_model"] = v
 
     # API 키 (create_deep_agent가 내부적으로 사용하지만, 환경변수로 전달됨)
-    # ANTHROPIC_API_KEY, OPENAI_API_KEY 등은 LangChain이 자동으로 읽으므로
-    # 여기서 별도 처리 불필요. 단, 존재 여부만 검증.
+    # ANTHROPIC_API_KEY, OPENAI_API_KEY, OPENROUTER_API_KEY 등은
+    # LangChain이 자동으로 읽으므로 여기서 별도 처리 불필요. 단, 존재 여부만 검증.
 
     # 샌드박스
     if v := os.environ.get("TOTORO_SANDBOX_MODE"):
@@ -1836,19 +1804,31 @@ def _load_env_overrides() -> dict:
     return overrides
 
 
-def ensure_api_keys():
-    """필수 API 키 존재 여부 검증. 없으면 에러 메시지와 함께 종료."""
-    required = []
+def ensure_api_keys(force_setup: bool = False):
+    """필수 API 키 존재 여부 검증. 없으면 설정 위자드 실행."""
+    from totoro.config.setup import load_provider_settings, inject_env_from_settings, run_setup_wizard
 
-    # LLM API 키 — LangChain 프로바이더가 자동 참조
-    # Anthropic: ANTHROPIC_API_KEY
-    # OpenAI/OpenRouter: OPENAI_API_KEY
-    if not os.environ.get("ANTHROPIC_API_KEY") and not os.environ.get("OPENAI_API_KEY"):
-        required.append("ANTHROPIC_API_KEY or OPENAI_API_KEY")
+    project_root = Path(os.getcwd())
 
-    if required:
-        print(f"Error: Missing required environment variables: {', '.join(required)}")
-        print("Set them in .env file or export them in your shell.")
+    # 1. Force setup via --setup flag
+    if force_setup:
+        settings = run_setup_wizard(project_root)
+        inject_env_from_settings(settings)
+        return
+
+    # 2. Try .totoro/settings.json
+    settings = load_provider_settings(project_root)
+    if settings:
+        inject_env_from_settings(settings)
+        return
+
+    # 3. Check env vars directly
+    if not (os.environ.get("ANTHROPIC_API_KEY") or
+            os.environ.get("OPENAI_API_KEY") or
+            os.environ.get("OPENROUTER_API_KEY") or
+            os.environ.get("VLLM_BASE_URL")):
+        print("Error: No API key found.")
+        print("Run 'totoro --setup' or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY.")
         raise SystemExit(1)
 ```
 
@@ -1856,8 +1836,10 @@ def ensure_api_keys():
 > ```
 > # .env.example
 > ANTHROPIC_API_KEY=sk-ant-...
-> # OPENAI_API_KEY=sk-...          # Alternative: OpenAI/OpenRouter
+> # OPENAI_API_KEY=sk-...          # Alternative: OpenAI
+> # OPENROUTER_API_KEY=sk-or-...   # Alternative: OpenRouter
 > # TAVILY_API_KEY=tvly-...        # Optional: for web_search tool
+> # VLLM_BASE_URL=http://...       # Optional: self-hosted vLLM
 > # TOTORO_MODEL=claude-sonnet-4-5-20250929
 > # TOTORO_SANDBOX_MODE=none
 > ```
@@ -1868,35 +1850,33 @@ def ensure_api_keys():
 
 ```toml
 [project]
-name = "totoro"
+name = "totoro-agent"
 requires-python = ">=3.11"
 
 [project.dependencies]
 # 핵심 프레임워크
-deepagents = ">=0.1"             # create_deep_agent(), 미들웨어, 내장 도구
-langgraph = ">=0.4"
-langchain = ">=0.3"
-langchain-core = ">=0.3"
-langchain-anthropic = ">=0.3"    # Claude 모델
+deepagents = ">=0.4"             # create_deep_agent(), 미들웨어, 내장 도구
+langgraph = ">=1.0"
+langchain = ">=1.0"
+langchain-core = ">=1.0"
+langchain-anthropic = ">=1.0"    # Claude 모델
+langchain-openai = ">=1.0"       # OpenAI / OpenRouter / vLLM
 
-# 저장소 (개발: 인메모리, 프로덕션: PostgreSQL)
-# langgraph-checkpoint-postgres = ">=2.0"
-# langgraph-store-postgres = ">=0.1"
+# 저장소
+langgraph-checkpoint-sqlite = ">=3.0"   # SQLite 체크포인터
+# langgraph-checkpoint-postgres = ">=2.0"  # 프로덕션
+# langgraph-store-postgres = ">=0.1"       # 프로덕션
 
-# TUI
-textual = ">=3.0"               # 터미널 UI
+# 입력
+prompt_toolkit = ">=3.0"         # 입력 프롬프트, 자동완성
 
 # 커스텀 도구 의존성
 tavily-python = ">=0.5"          # web_search
 httpx = ">=0.27"                 # fetch_url
 
-# MCP 통합
-langchain-mcp-adapters = ">=0.1"
-
 # 유틸리티
 pydantic = ">=2.0"
 python-dotenv = ">=1.0"
-rich = ">=13.0"                  # 터미널 출력 포맷팅
 
 [project.scripts]
 totoro = "totoro.cli:main"
@@ -1936,7 +1916,7 @@ totoro = "totoro.cli:main"
 
 ### Phase 5: 확장
 - [ ] MCP 도구 통합 + trust_level 권한 모델
-- [ ] 스킬 시스템 (./skills/ 디렉토리, SKILL.md 포맷)
+- [ ] 스킬 시스템 (built-in/skills/, ~/.totoro/skills/, .totoro/skills/)
 - [ ] 세션 관리 (--resume, --list, 복원 시 서브에이전트 처리)
 - [ ] LangSmith 트레이싱 통합
 - [ ] PostgresSaver / PostgresStore 프로덕션 백엔드

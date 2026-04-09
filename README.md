@@ -1,21 +1,6 @@
-# Totoro: Advanced CLI Coding Agent
+# Totoro: DeepAgents 프레임워크 기반의 터미널 자율 코딩 에이전트 CLI.
 
-```
-        .     *    .        .   *     .
-    .        ___         .        .
-        .  /     \  *        .          .
-   *     ./  @ @  \.    .        *       .
-    .   /  \  '  /  \        .
-       |    '---'    |  .  _____ ___ _____ ___  ____   ___
-    .  |  \       /  |   |_   _/ _ \_   _/ _ \|  _ \ / _ \
-       \   '.___.'   /  .  | || | | || || | | | |_) | | | |
-    .   \___________/      |_||_| |_||_||_| |_|____/ |_| |_|
-         /  | | |  \    *
-    *   /   | | |   \        Advanced CLI Coding Agent
-       '----' ' '----'  .    Powered by DeepAgents
-```
-
-DeepAgents 프레임워크 기반의 터미널 자율 코딩 에이전트 CLI.
+![totoro.png](asset/cli_img.png)
 
 ## 주요 기능
 

@@ -44,29 +44,30 @@ def load_config(cli_overrides: dict | None = None, project_root: str | None = No
 
 
 def ensure_api_keys(force_setup: bool = False):
-    """Verify required API keys exist. Runs setup wizard if needed."""
-    from totoro.config.setup import load_provider_settings, inject_env_from_settings, run_setup_wizard
+    """Verify required API keys exist. Runs setup wizard if needed.
 
-    project_root = Path(os.getcwd())
+    Settings are stored at ~/.totoro/settings.json (user home, not project).
+    """
+    from totoro.config.setup import load_provider_settings, inject_env_from_settings, run_setup_wizard
 
     # 1. Force setup via --setup flag
     if force_setup:
-        settings = run_setup_wizard(project_root)
+        settings = run_setup_wizard()
         inject_env_from_settings(settings)
         return
 
-    # 2. Try .totoro/settings.json
-    settings = load_provider_settings(project_root)
+    # 2. Try ~/.totoro/settings.json
+    settings = load_provider_settings()
     if settings:
         inject_env_from_settings(settings)
         return
 
     # 3. No settings.json — run wizard (if interactive)
     if sys.stdin.isatty():
-        settings = run_setup_wizard(project_root)
+        settings = run_setup_wizard()
         inject_env_from_settings(settings)
         return
 
     print("Error: No API key configured.")
-    print("Run `totoro --setup` interactively to configure, or create .totoro/settings.json.")
+    print("Run `totoro --setup` interactively to configure, or create ~/.totoro/settings.json.")
     raise SystemExit(1)

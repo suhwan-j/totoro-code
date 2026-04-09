@@ -179,11 +179,15 @@ class SplitPaneTUI:
 
         row = 0
         # Header
-        row = self._waddstr(win, row, 0, "── ", _PAIR_DIM)
-        self._waddstr(win, 0, 3, "◈ Totoro ", _PAIR_CYAN, bold=True)
+        prefix = "── "
+        title = "◈ Totoro "
+        row = self._waddstr(win, row, 0, prefix, _PAIR_DIM)
+        title_col = _wcswidth(prefix)
+        self._waddstr(win, 0, title_col, title, _PAIR_CYAN, bold=True)
         phase = self.tracker.phase
         phase_pair = _PAIR_YELLOW if phase == "Planning" else _PAIR_GREEN if phase == "Executing" else _PAIR_DIM
-        self._waddstr(win, 0, 10, phase, phase_pair, bold=True)
+        phase_col = title_col + _wcswidth(title)
+        self._waddstr(win, 0, phase_col, phase, phase_pair, bold=True)
 
         # Counters
         done_count = sum(1 for t in self.tracker.todos if t.status == "completed")
@@ -196,7 +200,7 @@ class SplitPaneTUI:
         if agent_count > 0:
             counters.append(f"Agents: {agent_count}")
         counter_text = f"  {' · '.join(counters)}"
-        self._waddstr(win, 0, 10 + len(phase) + 1, counter_text, _PAIR_DIM)
+        self._waddstr(win, 0, phase_col + len(phase) + 1, counter_text, _PAIR_DIM)
         row = 1
 
         # Separator
@@ -242,8 +246,12 @@ class SplitPaneTUI:
                     break
                 is_last = idx == len(agents) - 1
                 pane = pane_data.get(name)
-                elapsed = f"{time.time() - info.started_at:.0f}s"
-                tool_count = pane.tool_count if pane else info.tool_count
+                if pane:
+                    elapsed = pane.elapsed
+                    tool_count = pane.tool_count
+                else:
+                    elapsed = f"{time.time() - info.started_at:.0f}s"
+                    tool_count = info.tool_count
 
                 connector = "└── " if is_last else "├── "
                 child_pre = "    " if is_last else "│   "
@@ -278,7 +286,11 @@ class SplitPaneTUI:
         win.noutrefresh()
 
     def _render_right(self, height: int):
-        """Render subagent detail panels on right pane, each getting 1/N of the height."""
+        """Render subagent detail panels on right pane.
+
+        Completed/error panes collapse to a single summary line,
+        giving maximum space to still-running panes.
+        """
         win = self._right_win
         win.erase()
         _, w = win.getmaxyx()
@@ -288,72 +300,83 @@ class SplitPaneTUI:
             win.noutrefresh()
             return
 
-        n = len(panes)
-        pane_height = max(3, height // n)  # each pane gets 1/N of total height
+        # Only show running panes — completed ones disappear from right panel
+        # (left panel tree still shows them with ✓)
+        running_panes = [p for p in panes if p.status == "running"]
+        n_running = len(running_panes)
 
-        for idx, pane in enumerate(panes):
-            # Fixed region for this pane: [start_row, end_row)
-            start_row = idx * pane_height
-            end_row = (idx + 1) * pane_height if idx < n - 1 else height  # last pane gets remainder
-            if start_row >= height - 1:
-                break
+        if n_running == 0:
+            # All done — show brief summary
+            row = 0
+            for pane in panes:
+                if row >= height - 1:
+                    break
+                icon = "✓ " if pane.status == "done" else "✗ "
+                pair = _PAIR_GREEN if pane.status == "done" else _PAIR_RED
+                self._waddstr(win, row, 1, icon, pair)
+                self._waddstr(win, row, 3, pane.label, pair, bold=True)
+                stats = f"  {pane.elapsed} · {pane.tool_count} tools"
+                self._waddstr(win, row, 3 + len(pane.label), stats, _PAIR_DIM)
+                row += 1
+            win.noutrefresh()
+            return
 
-            row = start_row
+        row = 0
 
-            # Header
-            elapsed = pane.elapsed
-            pid_str = f"({pane.pid})" if pane.pid else ""
-            label_display = f"{pane.label} {pid_str}" if pid_str else pane.label
+        # ── Running panes only (full detail, split entire height) ──
+        if n_running > 0:
+            pane_height = max(3, height // n_running)
 
-            if pane.status == "done":
-                self._waddstr(win, row, 1, "✓ ", _PAIR_GREEN)
-                self._waddstr(win, row, 3, pane.label, _PAIR_GREEN, bold=True)
-                if pid_str:
-                    self._waddstr(win, row, 3 + len(pane.label) + 1, pid_str, _PAIR_DIM)
-            elif pane.status == "error":
-                self._waddstr(win, row, 1, "✗ ", _PAIR_RED)
-                self._waddstr(win, row, 3, pane.label, _PAIR_RED, bold=True)
-                if pid_str:
-                    self._waddstr(win, row, 3 + len(pane.label) + 1, pid_str, _PAIR_DIM)
-            else:
+            for idx, pane in enumerate(running_panes):
+                start_row = row
+                end_row = row + pane_height if idx < n_running - 1 else height
+                if start_row >= height - 1:
+                    break
+
+                # Header
+                elapsed = pane.elapsed
+                pid_str = f"({pane.pid})" if pane.pid else ""
+                label_display = f"{pane.label} {pid_str}" if pid_str else pane.label
+
                 self._waddstr(win, row, 1, "◈ ", _PAIR_CYAN)
                 self._waddstr(win, row, 3, pane.label, _PAIR_BOLD_WHITE, bold=True)
                 if pid_str:
                     self._waddstr(win, row, 3 + len(pane.label) + 1, pid_str, _PAIR_DIM)
 
-            stats = f"  {elapsed} · {pane.tool_count} tools"
-            self._waddstr(win, row, 3 + len(label_display), stats, _PAIR_DIM)
-            row += 1
-
-            # Current tool indicator
-            if pane.current_tool and row < end_row - 1:
-                self._waddstr(win, row, 2, f"⚡ {pane.current_tool}"[:w - 3], _PAIR_YELLOW)
+                stats = f"  {elapsed} · {pane.tool_count} tools"
+                self._waddstr(win, row, 3 + len(label_display), stats, _PAIR_DIM)
                 row += 1
 
-            # Output lines — fill remaining space in this pane's region
-            content_rows = end_row - row - 1  # -1 for separator
-            visible_lines = pane.recent_lines[-max(1, content_rows):]
-            for line in visible_lines:
-                if row >= end_row - 1:
-                    break
-                clean = _truncate_to_width(_strip_ansi(line), w - 3)
+                # Current tool indicator
+                if pane.current_tool and row < end_row - 1:
+                    self._waddstr(win, row, 2, f"⚡ {pane.current_tool}"[:w - 3], _PAIR_YELLOW)
+                    row += 1
 
-                # Color based on content
-                if clean.startswith("●") or clean.startswith("▸"):
-                    self._waddstr(win, row, 2, clean, _PAIR_CYAN)
-                elif clean.startswith("  ⎿"):
-                    self._waddstr(win, row, 2, clean, _PAIR_DIM)
-                elif clean.startswith("+"):
-                    self._waddstr(win, row, 2, clean, _PAIR_GREEN)
-                elif clean.startswith("✗") or "error" in clean.lower()[:30]:
-                    self._waddstr(win, row, 2, clean, _PAIR_RED)
-                else:
-                    self._waddstr(win, row, 2, clean, _PAIR_DIM)
-                row += 1
+                # Output lines — fill remaining space in this pane's region
+                content_rows = end_row - row - 1  # -1 for separator
+                visible_lines = pane.recent_lines[-max(1, content_rows):]
+                for line in visible_lines:
+                    if row >= end_row - 1:
+                        break
+                    clean = _truncate_to_width(_strip_ansi(line), w - 3)
 
-            # Separator between panes (not after last)
-            if idx < n - 1 and end_row - 1 < height:
-                self._waddstr(win, end_row - 1, 0, "┈" * (w - 1), _PAIR_DIM)
+                    # Color based on content
+                    if clean.startswith("●") or clean.startswith("▸"):
+                        self._waddstr(win, row, 2, clean, _PAIR_CYAN)
+                    elif clean.startswith("  ⎿"):
+                        self._waddstr(win, row, 2, clean, _PAIR_DIM)
+                    elif clean.startswith("+"):
+                        self._waddstr(win, row, 2, clean, _PAIR_GREEN)
+                    elif clean.startswith("✗") or "error" in clean.lower()[:30]:
+                        self._waddstr(win, row, 2, clean, _PAIR_RED)
+                    else:
+                        self._waddstr(win, row, 2, clean, _PAIR_DIM)
+                    row += 1
+
+                # Separator between running panes (not after last)
+                if idx < n_running - 1 and end_row - 1 < height:
+                    self._waddstr(win, end_row - 1, 0, "┈" * (w - 1), _PAIR_DIM)
+                    row = end_row
 
         win.noutrefresh()
 

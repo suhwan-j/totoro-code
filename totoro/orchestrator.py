@@ -53,21 +53,11 @@ def set_pane_manager(pane_manager: PaneManager | None):
 
 @tool
 def orchestrate_tool(tasks_json: str) -> str:
-    """Run multiple Totoro task agents in PARALLEL. Use this instead of sequential task calls.
-
-    Each task spawns an independent Totoro agent with full tool access and skills.
-    All tasks execute concurrently and their results are combined.
+    """Run sub-agents in parallel. Input: JSON array of {"type": "<agent>", "task": "<description>"}.
+    Types: catbus (plan), satsuki (code), mei (research), susuwatari (micro), tatsuo (review).
 
     Args:
-        tasks_json: JSON array of task objects. Each object has:
-            - "task": detailed description of what the Totoro agent should do
-
-    Example:
-        orchestrate_tool('[
-            {"task": "Create index.html with React setup and Vite config"},
-            {"task": "Create src/App.tsx with fibonacci dashboard component"},
-            {"task": "Create api/fibonacci.ts serverless function"}
-        ]')
+        tasks_json: JSON array, e.g. '[{"type":"satsuki","task":"Create index.html"}]'
     """
     try:
         tasks = json.loads(tasks_json)
@@ -79,20 +69,25 @@ def orchestrate_tool(tasks_json: str) -> str:
 
     results = _run_parallel(tasks)
 
+    # Shorter limits to save context for small-context models
+    MAX_RESULT_CHARS = 1500
+
     parts = []
     for name, result in results.items():
         if isinstance(result, SubagentResult):
             result_text = sanitize_text(result.final_text)
+            if len(result_text) > MAX_RESULT_CHARS:
+                result_text = result_text[:MAX_RESULT_CHARS] + "\n...(truncated)"
             files = ", ".join(result.files_modified[:5]) if result.files_modified else "none"
             parts.append(
-                f"=== [{name}] ({len(result.tools_used)} tools, files: {files}) ===\n"
-                f"{result_text[:3000]}"
+                f"[{name}] {len(result.tools_used)} tools, files: {files}\n"
+                f"{result_text}"
             )
         else:
             result_text = sanitize_text(str(result))
-            if len(result_text) > 3000:
-                result_text = result_text[:3000] + "\n... (truncated)"
-            parts.append(f"=== [{name}] ===\n{result_text}")
+            if len(result_text) > MAX_RESULT_CHARS:
+                result_text = result_text[:MAX_RESULT_CHARS] + "\n...(truncated)"
+            parts.append(f"[{name}]\n{result_text}")
 
     return "\n\n".join(parts) or "(no results)"
 
@@ -123,14 +118,14 @@ def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
     result_holders: dict[str, mp.Queue] = {}
 
     for i, task in enumerate(tasks):
-        agent_type = task.get("type", "coder")  # type hint preserved for backwards compat
+        agent_type = task.get("type", "satsuki")  # default to satsuki (senior agent)
         description = task.get("task", task.get("description", ""))
-        label = f"totoro-{i}"
+        label = f"{agent_type}-{i}"
 
-        # All tasks use the unified totoro task agent config
-        cfg = config_map.get(agent_type) or config_map.get("coder")
+        # Route to character-specific config
+        cfg = config_map.get(agent_type) or config_map.get("satsuki")
         if cfg is None:
-            cfg = {"name": "totoro", "system_prompt": TASK_AGENT_PROMPT, "description": ""}
+            cfg = {"name": "susuwatari", "system_prompt": "You are Susuwatari, a micro agent. Execute the task directly.", "description": ""}
 
         if _tracker:
             _tracker.on_subagent_start(label, description)
@@ -173,8 +168,7 @@ def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
             _curses.wrapper(tui.run)
         except Exception:
             pass  # Ensure curses exits cleanly
-        finally:
-            _tracker._panel_enabled = True
+        # Panel stays disabled — render_final_summary in cli.py will handle cleanup
 
     # Stop monitor
     monitor_halt.set()
@@ -228,6 +222,14 @@ def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
             safe_print(summary)
         _pane_manager.clear()
 
+    # Keep panel disabled — the main agent will continue processing
+    # and the render thread would show stale plan data otherwise.
+    # Panel re-enables naturally when _stream_with_hitl restarts the render thread.
+    if _tracker:
+        _tracker._panel_enabled = False
+        _tracker._clear_previous()
+        _tracker._last_panel_lines = 0
+
     return results
 
 
@@ -268,12 +270,19 @@ def _worker_process(
     event_queue: mp.Queue,
     result_queue: mp.Queue,
 ):
-    """Run in a child process. Rebuilds the subagent graph and streams."""
+    """Run in a child process. Routes to lightweight LLM call or full agent."""
     try:
-        result = _run_subagent_in_process(
-            subagent_cfg, description, label,
-            model_config, project_root, event_queue,
-        )
+        agent_name = subagent_cfg.get("name", "")
+        if agent_name == "catbus":
+            result = _run_lightweight_llm(
+                subagent_cfg, description, label,
+                model_config, project_root, event_queue,
+            )
+        else:
+            result = _run_subagent_in_process(
+                subagent_cfg, description, label,
+                model_config, project_root, event_queue,
+            )
         result_queue.put(result)
     except Exception as e:
         result_queue.put(SubagentResult(final_text=f"Process error: {e}"))
@@ -293,16 +302,57 @@ def _worker_process(
         os._exit(0)
 
 
-TASK_AGENT_PROMPT = """You are Totoro, a task-focused coding agent. You execute a single assigned task directly and efficiently.
+def _run_lightweight_llm(
+    subagent_cfg: dict,
+    description: str,
+    label: str,
+    model_config: dict,
+    project_root: str,
+    event_queue: mp.Queue,
+) -> SubagentResult:
+    """Single LLM call — no agent loop, no tools. Fast path for catbus (planner).
 
+    Just sends system_prompt + user message and returns the response.
+    """
+    from totoro.core.agent import _resolve_model
+    from langchain_core.messages import SystemMessage, HumanMessage
+
+    def emit(event_type: str, **data):
+        try:
+            event_queue.put_nowait(SubagentEvent(
+                label=label, event_type=event_type, data=data,
+            ))
+        except Exception:
+            pass
+
+    emit("tool_start", name="planning", summary="analyzing request")
+
+    model = _resolve_model(model_config["model_name"], model_config["provider"])
+    system_prompt = subagent_cfg.get("system_prompt", "")
+
+    messages = [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=f"Working directory: {project_root}\n\n{description}"),
+    ]
+
+    try:
+        response = model.invoke(messages)
+        text = response.content if isinstance(response.content, str) else str(response.content)
+    except Exception as e:
+        text = f"Planning error: {e}"
+
+    emit("ai_text", text=text[:500])
+    emit("tool_end", name="planning", is_error=False, result=text[:200])
+
+    return SubagentResult(final_text=text)
+
+
+TASK_AGENT_RULES = """
 ## Rules
 - Execute the given task immediately — do NOT plan, do NOT create todos, do NOT delegate.
-- Write files directly. Do NOT read existing files unless you absolutely must edit them.
-- Use write_file to create new files, edit_file for targeted modifications.
-- Use execute to run shell commands only when necessary (install packages, build).
+- NEVER use the "task" tool. You do NOT have sub-agents. Do all work yourself directly.
 - Be concise — report what you did in one sentence when done.
-- Do NOT verify, review, or double-check your own work. Just write the files and finish.
-- Do NOT read files you just created. Do NOT list directories after creating files.
+- Do NOT verify, review, or double-check your own work unless that IS your task.
 - STOP as soon as your assigned task is complete. Do not do extra work.
 """
 
@@ -329,10 +379,14 @@ def _run_subagent_in_process(
 
     model = _resolve_model(model_config["model_name"], model_config["provider"])
 
+    # Use character-specific system prompt + shared task rules
+    character_prompt = subagent_cfg.get("system_prompt", "") + TASK_AGENT_RULES
+    character_name = subagent_cfg.get("name", "totoro-task")
+
     subagent = create_deep_agent(
-        name="totoro-task",
+        name=character_name,
         model=model,
-        system_prompt=TASK_AGENT_PROMPT,
+        system_prompt=character_prompt,
         tools=[],  # backend provides file I/O + shell; no extra tools needed
         backend=LocalShellBackend(
             root_dir=project_root,
@@ -357,8 +411,6 @@ def _run_subagent_in_process(
     pending_ops: dict[str, dict] = {}
     empty_turns = 0
     max_empty_turns = 3
-    start_time = time.time()
-    max_wall_time = 120
 
     def emit(event_type: str, **data):
         try:
@@ -370,9 +422,6 @@ def _run_subagent_in_process(
 
     try:
         for event in subagent.stream(input_payload, config=config, stream_mode="updates"):
-            if time.time() - start_time > max_wall_time:
-                result.final_text += "\n[Sub-agent timed out]"
-                break
 
             for node_name, node_output in event.items():
                 if not isinstance(node_output, dict):

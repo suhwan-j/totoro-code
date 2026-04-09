@@ -58,15 +58,16 @@ def _banner(config=None, session_id: str = "") -> str:
         "       █████                 █████",
         "       █████                 █████",
         "        ███                   ███",
-        "          ██████████████████████",
-        "       ████████████████████████████",
-        "      █████ ▄██▄ ████████ ▄██▄ █████",
-        "     ╲████ █▀▀▀█ ████████ █▀▀▀█ ████╱",
-        "   ───████ █●░░█ ████████ █●░░█ ████───",
-        "      ╱███ ▀██▀ ████▼████ ▀██▀ ███ ╲",
-        "        ██████████░▄▄▄░██████████",
-        "      ▐███░░░░░░░░░░░░░░░░░░░░░░███▌",
-        "     ███░░░░░▄▀▀▀▄░░░░░░░▄▀▀▀▄░░░░░███",
+        "          █████████████████████",
+        "       ███████████████████████████",
+        "      █████╭ ╮█████████████╭ ╮█████",
+        "     ╲█████╰●╯████ ⊙ ⊙ ████╰●╯█████╱",
+        "   ───█████████████████████████████───",
+        "    ╱▐█████▥▥▥▥▥▥▥▥▥▥▥▥▥▥▥▥▥▥▥█████▌╲",
+        "    ▐████████████▥▥▥▥▥▥▥████████████▌",
+        "    █████████████████████████████████",
+        "   ▐██████░░░░░░░░░░░░░░░░░░░░░░██████▌",
+        "   ███░░░░░░░▄▀▀▀▄░░░░░░░▄▀▀▀▄░░░░░░███",
         "  |██░░░░░▄▀▀▀▄░░░░▄▀▀▀▄░░░░▄▀▀▀▄░░░░██|",
         " ▐|█░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█|▌",
         " █|░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|█",
@@ -288,6 +289,11 @@ def _run_interactive(agent, invoke_config: dict, session_manager=None,
                 "Do NOT execute any file operations or shell commands. Only plan.]"
             )
 
+        # Track turn + analyze user message for Auto-Dream memory
+        from totoro.commands.registry import _auto_dream as _ad
+        if _ad:
+            _ad.on_turn(user_input)
+
         # Track turn in session manager
         if session_manager:
             session_id = invoke_config["configurable"]["thread_id"]
@@ -301,6 +307,14 @@ def _run_interactive(agent, invoke_config: dict, session_manager=None,
             handler=handler,
         )
         print()  # spacing before next prompt
+
+    # ── Session exit: final memory extraction ──
+    from totoro.commands.registry import _auto_dream as _ad_exit
+    if _ad_exit and _ad_exit._turn_count > 0:
+        try:
+            _ad_exit.extract_on_exit(agent, invoke_config)
+        except Exception:
+            pass
 
 
 def _handle_model_change(sentinel: str, config, session_manager):
@@ -350,11 +364,11 @@ def _handle_model_change(sentinel: str, config, session_manager):
         return None
 
 
-def _persist_model_to_settings(model_name: str, project_root: str):
-    """Save selected model to .totoro/settings.json so it persists across sessions."""
+def _persist_model_to_settings(model_name: str, project_root: str = ""):
+    """Save selected model to ~/.totoro/settings.json so it persists across sessions."""
     import json
     from pathlib import Path
-    settings_path = Path(project_root) / ".totoro" / "settings.json"
+    settings_path = Path.home() / ".totoro" / "settings.json"
     if settings_path.exists():
         try:
             with open(settings_path) as f:
@@ -611,7 +625,15 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
             tracker._clear_previous()
             tracker._last_panel_lines = 0
         had_error = True
-        _safe_print(f"\n{_RED}[Stream error] {sanitize_text(str(e))}{_RESET}", flush=True)
+        err_type = type(e).__name__
+        err_detail = sanitize_text(str(e))[:500]
+        _safe_print(f"\n{_RED}[Stream error] {err_type}: {err_detail}{_RESET}", flush=True)
+        # Show HTTP status if available (e.g., OpenRouter/OpenAI API errors)
+        if hasattr(e, 'status_code'):
+            _safe_print(f"{_DIM}  HTTP {e.status_code}{_RESET}", flush=True)
+        if hasattr(e, 'response') and hasattr(e.response, 'text'):
+            resp_text = sanitize_text(str(e.response.text))[:300]
+            _safe_print(f"{_DIM}  Response: {resp_text}{_RESET}", flush=True)
 
         # Fallback: try non-streaming invoke
         try:
@@ -832,10 +854,28 @@ def _collect_hitl_decisions(interrupts) -> tuple[list[dict], str]:
                     print("  Edit failed, rejecting.")
                     decisions.append({"type": "reject"})
 
-            # Reject
-            else:
+            # Explicit reject
+            elif choice.lower() in ("r", "reject", "n", "no"):
                 print(f"  {_RED}✗ Rejected{_RESET}")
                 decisions.append({"type": "reject"})
+
+            # Free text → treat as edit instruction
+            else:
+                edited_args = _apply_natural_language_edit(tool_name, tool_args, choice)
+                if edited_args is not None:
+                    print(f"  {_DIM}Edited args:{_RESET}")
+                    for k, v in edited_args.items():
+                        v_str = sanitize_text(str(v))
+                        if len(v_str) > 200:
+                            v_str = v_str[:200] + "..."
+                        print(f"    {k}: {v_str}")
+                    decisions.append({
+                        "type": "edit",
+                        "edited_action": {"name": tool_name, "args": edited_args},
+                    })
+                else:
+                    print(f"  {_RED}✗ Could not parse edit, rejecting{_RESET}")
+                    decisions.append({"type": "reject"})
 
     return decisions, _HITL_CONTINUE
 

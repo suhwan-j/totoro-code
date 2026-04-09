@@ -37,39 +37,36 @@ _ICON_TOOL = "⚡"
 # ─── Spinner frames for thinking animation ───
 _SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
-# ─── Fun agent names ───
-_AGENT_NAMES = [
-    "Nova", "Pixel", "Spark", "Nimbus", "Echo",
-    "Quasar", "Bolt", "Orbit", "Flux", "Comet",
-    "Prism", "Vortex", "Nebula", "Helix", "Drift",
-]
+# ─── Totoro character names ───
+_MAIN_AGENT_NAME = "Totoro"
 
-# ─── Fun subagent names mapped by type ───
-_SUBAGENT_NAMES = {
-    "coder":      ["Bytesmith", "Syntex", "Forger", "Weaver", "Cipher"],
-    "researcher": ["Scout", "Seeker", "Oracle", "Lens", "Probe"],
-    "explorer":   ["Pathfinder", "Rover", "Compass", "Atlas", "Trailblazer"],
-    "reviewer":   ["Sentinel", "Warden", "Inspector", "Aegis", "Guardian"],
-    "planner":    ["Architect", "Blueprint", "Strategist", "Navigator", "Compass"],
+_CHARACTER_NAMES = {
+    "catbus":     "Catbus",      # 네코버스 — Router/Planner
+    "satsuki":    "Satsuki",     # 사츠키   — Senior Agent
+    "mei":        "Mei",         # 메이     — Explorer/Researcher
+    "tatsuo":     "Tatsuo",      # 타츠오   — Knowledge/Reviewer
+    "susuwatari": "Susuwatari",  # 스스와타리 — Micro Agent
 }
 
-_used_names: set = set()
+_CHARACTER_ICONS = {
+    "catbus":     "🚌",
+    "satsuki":    "🧒",
+    "mei":        "👧",
+    "tatsuo":     "👨",
+    "susuwatari": "🌱",
+}
 
 
 def _pick_agent_name() -> str:
-    """Pick a random fun name for the main agent (per session)."""
-    return random.choice(_AGENT_NAMES)
+    """Return main agent name."""
+    return _MAIN_AGENT_NAME
 
 
 def _pick_subagent_name(agent_type: str) -> str:
-    """Pick a fun name for a subagent based on its type."""
-    names = _SUBAGENT_NAMES.get(agent_type, _AGENT_NAMES)
-    available = [n for n in names if n not in _used_names]
-    if not available:
-        available = names
-    name = random.choice(available)
-    _used_names.add(name)
-    return name
+    """Return character name for the subagent type."""
+    # Extract type from label like "satsuki-0" → "satsuki"
+    base_type = agent_type.rsplit("-", 1)[0] if "-" in agent_type else agent_type
+    return _CHARACTER_NAMES.get(base_type, agent_type)
 
 
 @dataclass
@@ -235,7 +232,7 @@ class StatusTracker:
             return
         with self._lock:
             # Once AI text has started, stop showing the thinking indicator
-            if self._got_ai_text and not self.active_subagents and not self.todos:
+            if self._got_ai_text and not self.active_subagents:
                 if self._last_panel_lines > 0:
                     self._clear_previous()
                     self._last_panel_lines = 0
@@ -338,9 +335,12 @@ class StatusTracker:
             for idx, (name, info) in enumerate(agent_list):
                 is_last = idx == len(agent_list) - 1
                 pane = pane_data.get(name)
-                elapsed = time.time() - info.started_at
-                elapsed_str = f"{elapsed:.0f}s"
-                tool_count = pane.tool_count if pane else info.tool_count
+                if pane:
+                    elapsed_str = pane.elapsed
+                    tool_count = pane.tool_count
+                else:
+                    elapsed_str = f"{time.time() - info.started_at:.0f}s"
+                    tool_count = info.tool_count
 
                 # Status icon with spinner for active agents
                 if pane and pane.status == "done":

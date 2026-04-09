@@ -36,6 +36,7 @@ class PaneState:
     recent_lines: list = field(default_factory=list)
     tool_count: int = 0
     start_time: float = field(default_factory=time.time)
+    end_time: float | None = None
     status: str = "running"
     current_tool: str = ""
     files: list = field(default_factory=list)
@@ -44,7 +45,8 @@ class PaneState:
 
     @property
     def elapsed(self) -> str:
-        secs = int(time.time() - self.start_time)
+        end = self.end_time if self.end_time else time.time()
+        secs = int(end - self.start_time)
         if secs < 60:
             return f"{secs}s"
         return f"{secs // 60}m{secs % 60}s"
@@ -110,9 +112,11 @@ class PaneManager:
             elif event.event_type == "done":
                 if pane.status == "running":
                     pane.status = "done"
+                    pane.end_time = time.time()
 
             elif event.event_type == "error":
                 pane.status = "error"
+                pane.end_time = time.time()
                 pane.append(f"✗ {event.data.get('text', 'Error')[:60]}")
 
     def complete_subagent(self, label: str):
@@ -120,6 +124,8 @@ class PaneManager:
             pane = self.panes.get(label)
             if pane:
                 pane.status = "done"
+                if pane.end_time is None:
+                    pane.end_time = time.time()
 
     def get_panes(self) -> list[PaneState]:
         """Get snapshot of all panes for rendering."""
