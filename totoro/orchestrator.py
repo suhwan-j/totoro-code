@@ -218,7 +218,13 @@ def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
     results: dict[str, SubagentResult | str] = {}
     event_queue: mp.Queue = mp.Queue(maxsize=2000)
     config_map = {cfg["name"]: cfg for cfg in _subagent_configs}
-    use_curses = _pane_manager is not None and _tracker is not None and len(tasks) > 0
+    import sys as _sys
+    use_curses = (
+        _pane_manager is not None
+        and _tracker is not None
+        and len(tasks) > 0
+        and _sys.stdout.isatty()
+    )
 
     # Start event collector thread
     collector_halt = threading.Event()
@@ -287,13 +293,10 @@ def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
         try:
             _curses.wrapper(tui.run)
         except Exception as e:
-            # Restore terminal state and log error
-            try:
-                _curses.endwin()
-            except Exception:
-                pass
-            import sys as _sys
-            print(f"  [warn] TUI error: {e}", file=_sys.stderr, flush=True)
+            # curses.wrapper already calls endwin(), don't call it again
+            err_msg = str(e)
+            if "nocbreak" not in err_msg and "endwin" not in err_msg:
+                print(f"  [warn] TUI error: {e}", file=_sys.stderr, flush=True)
         # Panel stays disabled — render_final_summary in cli.py will handle cleanup
 
     # Stop monitor
