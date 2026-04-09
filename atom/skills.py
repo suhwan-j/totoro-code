@@ -7,13 +7,10 @@ import urllib.request
 from pathlib import Path
 from dataclasses import dataclass
 
-_DIM = "\033[0;90m"
-_BOLD = "\033[1m"
-_GREEN = "\033[0;32m"
-_CYAN = "\033[0;36m"
-_YELLOW = "\033[1;33m"
-_RED = "\033[1;31m"
-_RESET = "\033[0m"
+from atom.colors import (
+    DIM as _DIM, BOLD as _BOLD, AMBER_LT as _GREEN,
+    BLUE as _CYAN, AMBER as _YELLOW, COPPER as _RED, RESET as _RESET,
+)
 
 
 @dataclass

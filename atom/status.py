@@ -13,18 +13,20 @@ from dataclasses import dataclass, field
 from atom.utils import sanitize_text
 
 
-# ─── ANSI helpers ───
+# ─── ANSI helpers (palette-based) ───
+from atom.colors import (
+    RESET as _RESET, BOLD as _BOLD,
+    DIM as _DIM, IVORY_DK,
+    BLUE as _CYAN, BLUE_LT as _BODY, BLUE_DK,
+    AMBER as _YELLOW, AMBER_LT,
+    COPPER as _RED,
+    IVORY as _SECONDARY, IVORY_LT as _WHITE,
+    ACCENT,
+)
 _ESC = "\033["
-_RESET = f"{_ESC}0m"
-_BOLD = f"{_ESC}1m"
-_DIM = f"{_ESC}0;90m"
-_CYAN = f"{_ESC}1;36m"
-_YELLOW = f"{_ESC}1;33m"
-_GREEN = f"{_ESC}1;32m"
-_BLUE = f"{_ESC}0;34m"
-_MAGENTA = f"{_ESC}0;35m"
-_RED = f"{_ESC}1;31m"
-_WHITE = f"{_ESC}0;37m"
+_GREEN = AMBER_LT           # progress / done → amber light
+_BLUE = _CYAN                # tools → blue
+_MAGENTA = _SECONDARY        # subagent spinner → ivory
 
 _ICON_DONE = "✓"
 _ICON_ACTIVE = "▸"
@@ -279,7 +281,7 @@ class StatusTracker:
         return [f"  {_CYAN}{spinner}{_RESET} {_DIM}{self.agent_name} is thinking...{_RESET}"]
 
     def _build_panel(self) -> list[str]:
-        width = min(shutil.get_terminal_size().columns - 2, 120)
+        width = shutil.get_terminal_size().columns - 2
         lines = []
 
         # ─── Header ───
@@ -405,7 +407,7 @@ class StatusTracker:
         if total == 0 and agent_total == 0:
             return
 
-        width = min(shutil.get_terminal_size().columns - 2, 120)
+        width = shutil.get_terminal_size().columns - 2
         done = sum(1 for t in self.todos if t.status == "completed")
 
         parts = [f"Tools: {self.tool_count}"]

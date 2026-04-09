@@ -147,7 +147,8 @@ class SessionManager:
         if not sessions:
             return "No sessions found."
 
-        lines = ["\033[1mSessions:\033[0m"]
+        from atom.colors import BOLD, RESET
+        lines = [f"{BOLD}Sessions:{RESET}"]
         for s in sessions:
             age = _format_age(time.time() - s.created_at)
             active = _format_age(time.time() - s.last_active)

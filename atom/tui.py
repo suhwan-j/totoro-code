@@ -15,16 +15,16 @@ if TYPE_CHECKING:
     from atom.pane import PaneManager
 
 
-# curses color pair IDs
-_PAIR_DIM = 1
-_PAIR_GREEN = 2
-_PAIR_YELLOW = 3
-_PAIR_CYAN = 4
-_PAIR_RED = 5
-_PAIR_BLUE = 6
-_PAIR_MAGENTA = 7
-_PAIR_BOLD_WHITE = 8
-_PAIR_DIVIDER = 9
+# curses color pair IDs (mapped to palette)
+_PAIR_DIM = 1        # Ivory dark  #4A3C28 → divider / dim
+_PAIR_GREEN = 2      # Amber light #FAC775 → done / progress
+_PAIR_YELLOW = 3     # Amber       #EF9F27 → active / accent
+_PAIR_CYAN = 4       # Blue        #378ADD → prompt / heading
+_PAIR_RED = 5        # Copper      #C85A38 → error
+_PAIR_BLUE = 6       # Blue light  #85B7EB → body / tools
+_PAIR_MAGENTA = 7    # Ivory       #C4A876 → secondary
+_PAIR_BOLD_WHITE = 8 # Ivory light #EDE0C4 → body text
+_PAIR_DIVIDER = 9    # Ivory dark  #4A3C28
 
 _ANSI_RE = re.compile(r'\033\[[0-9;]*m')
 
@@ -84,16 +84,40 @@ class SplitPaneTUI:
         curses.start_color()
         curses.use_default_colors()
 
-        # Init color pairs with default background (-1)
-        curses.init_pair(_PAIR_DIM, curses.COLOR_WHITE, -1)
-        curses.init_pair(_PAIR_GREEN, curses.COLOR_GREEN, -1)
-        curses.init_pair(_PAIR_YELLOW, curses.COLOR_YELLOW, -1)
-        curses.init_pair(_PAIR_CYAN, curses.COLOR_CYAN, -1)
-        curses.init_pair(_PAIR_RED, curses.COLOR_RED, -1)
-        curses.init_pair(_PAIR_BLUE, curses.COLOR_BLUE, -1)
-        curses.init_pair(_PAIR_MAGENTA, curses.COLOR_MAGENTA, -1)
-        curses.init_pair(_PAIR_BOLD_WHITE, curses.COLOR_WHITE, -1)
-        curses.init_pair(_PAIR_DIVIDER, curses.COLOR_WHITE, -1)
+        # Init custom colors from palette (curses uses 0-1000 range)
+        # Only if terminal supports color changes; fall back to defaults
+        _can_change = curses.can_change_color()
+        if _can_change:
+            def _rgb(r, g, b):
+                return int(r / 255 * 1000), int(g / 255 * 1000), int(b / 255 * 1000)
+            curses.init_color(16, *_rgb(96, 80, 58))      # #60503A ivory dark
+            curses.init_color(17, *_rgb(255, 216, 153))   # #FFD899 amber light
+            curses.init_color(18, *_rgb(245, 178, 64))    # #F5B240 amber
+            curses.init_color(19, *_rgb(86, 160, 240))    # #56A0F0 blue
+            curses.init_color(20, *_rgb(224, 104, 64))    # #E06840 copper
+            curses.init_color(21, *_rgb(168, 207, 250))   # #A8CFFA blue light
+            curses.init_color(22, *_rgb(212, 186, 142))   # #D4BA8E ivory
+            curses.init_color(23, *_rgb(245, 236, 216))   # #F5ECD8 ivory light
+            curses.init_pair(_PAIR_DIM, 16, -1)
+            curses.init_pair(_PAIR_GREEN, 17, -1)
+            curses.init_pair(_PAIR_YELLOW, 18, -1)
+            curses.init_pair(_PAIR_CYAN, 19, -1)
+            curses.init_pair(_PAIR_RED, 20, -1)
+            curses.init_pair(_PAIR_BLUE, 21, -1)
+            curses.init_pair(_PAIR_MAGENTA, 22, -1)
+            curses.init_pair(_PAIR_BOLD_WHITE, 23, -1)
+            curses.init_pair(_PAIR_DIVIDER, 16, -1)
+        else:
+            # Fallback: closest standard colors
+            curses.init_pair(_PAIR_DIM, curses.COLOR_YELLOW, -1)
+            curses.init_pair(_PAIR_GREEN, curses.COLOR_YELLOW, -1)
+            curses.init_pair(_PAIR_YELLOW, curses.COLOR_YELLOW, -1)
+            curses.init_pair(_PAIR_CYAN, curses.COLOR_CYAN, -1)
+            curses.init_pair(_PAIR_RED, curses.COLOR_RED, -1)
+            curses.init_pair(_PAIR_BLUE, curses.COLOR_CYAN, -1)
+            curses.init_pair(_PAIR_MAGENTA, curses.COLOR_WHITE, -1)
+            curses.init_pair(_PAIR_BOLD_WHITE, curses.COLOR_WHITE, -1)
+            curses.init_pair(_PAIR_DIVIDER, curses.COLOR_YELLOW, -1)
 
         stdscr.nodelay(True)  # non-blocking getch
         stdscr.timeout(300)

@@ -6,14 +6,12 @@ import os
 import sys
 from pathlib import Path
 
-# ANSI colors
-_CYAN = "\033[1;36m"
-_YELLOW = "\033[1;33m"
-_GREEN = "\033[0;32m"
-_DIM = "\033[0;90m"
-_BOLD = "\033[1m"
-_RED = "\033[1;31m"
-_RESET = "\033[0m"
+# ANSI colors (palette-based)
+from atom.colors import (
+    BLUE as _CYAN, AMBER as _YELLOW, AMBER_LT as _GREEN,
+    DIM as _DIM, BOLD as _BOLD, COPPER as _RED, RESET as _RESET,
+    ACCENT, BODY, SECONDARY,
+)
 
 PROVIDERS = [
     ("openrouter", "OpenRouter", "recommended, multi-model"),
@@ -25,11 +23,11 @@ PROVIDERS = [
 # Provider → available models
 _PROVIDER_MODELS = {
     "openrouter": [
+        ("z-ai/glm-5v-turbo", "GLM 5v Turbo", "default"),
         ("anthropic/claude-haiku-4-5", "Claude Haiku 4.5", "fast & cheap"),
         ("openai/gpt-5.4-mini", "GPT-5.4 Mini", "fast"),
         ("google/gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash", "fast & cheap"),
-        ("z-ai/glm-5v-turbo", "GLM 5v Turbo", "fast"),
-        ("qwen/qwen3.5-35b-a3b", "Qwen3.5 35B", ""),
+        ("qwen/qwen3.5-35b-a3b", "Qwen3.5 35B", "fuck"),
     ],
     "anthropic": [
         ("claude-sonnet-4-5-20250929", "Claude Sonnet 4.5", "recommended"),
@@ -62,9 +60,9 @@ _EXTRAS_ENV_MAP = {
 def run_setup_wizard(project_root: Path) -> dict:
     """Run interactive setup wizard. Returns settings dict."""
     print()
-    print(f"  {_CYAN}╭─────────────────────────────────────╮{_RESET}")
-    print(f"  {_CYAN}│  {_YELLOW}Atom Setup{_CYAN}                         │{_RESET}")
-    print(f"  {_CYAN}╰─────────────────────────────────────╯{_RESET}")
+    print(f"  {_DIM}╭─────────────────────────────────────╮{_RESET}")
+    print(f"  {_DIM}│  {ACCENT}Atom Setup{_DIM}                         │{_RESET}")
+    print(f"  {_DIM}╰─────────────────────────────────────╯{_RESET}")
     print()
 
     # Load existing settings for defaults

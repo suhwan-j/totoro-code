@@ -10,8 +10,7 @@ import tty
 import termios
 import threading
 
-_DIM = "\033[0;90m"
-_RESET = "\033[0m"
+from atom.colors import DIM as _DIM, RESET as _RESET, BLUE, AMBER, IVORY
 
 
 class HotkeyListener:
@@ -110,11 +109,6 @@ class HotkeyListener:
     def _cycle_mode(self):
         """Cycle mode and print inline notification."""
         new_mode = self._handler.cycle_mode()
-        if new_mode == "auto-approve":
-            color = "\033[1;33m"
-        elif new_mode == "plan-only":
-            color = "\033[1;36m"
-        else:
-            color = "\033[1;32m"
+        color = {"auto-approve": AMBER, "plan-only": IVORY}.get(new_mode, BLUE)
         sys.stdout.write(f"\r{_DIM}  ⏵⏵ {color}{new_mode}{_RESET}{_DIM} on (shift+tab to cycle){_RESET}\033[K\n")
         sys.stdout.flush()

@@ -8,11 +8,7 @@ import time
 import threading
 from dataclasses import dataclass, field
 
-_DIM = "\033[0;90m"
-_GREEN = "\033[0;32m"
-_RED = "\033[1;31m"
-_BOLD = "\033[1m"
-_RESET = "\033[0m"
+from atom.colors import DIM as _DIM, AMBER_LT as _GREEN, COPPER as _RED, BOLD as _BOLD, RESET as _RESET
 
 
 @dataclass

@@ -1,5 +1,10 @@
 """Slash command registry and handler."""
 import time
+from atom.colors import (
+    RESET as _R, BOLD as _B, DIM as _D,
+    BLUE as _BL, AMBER as _AM, AMBER_LT as _AL,
+    COPPER as _CP, BODY as _BD, SECONDARY as _SC,
+)
 
 # These are injected by CLI after agent creation
 _session_manager = None
@@ -87,7 +92,7 @@ def handle_slash_command(user_input: str, agent, invoke_config: dict) -> str | N
 def _cmd_help(args, agent, config) -> str:
     from atom.input import format_mode_help
     mode_help = format_mode_help()
-    return f"""\033[1mAvailable commands:\033[0m
+    return f"""{_B}Available commands:{_R}
   /help              Show this help message
   /exit              Exit the CLI
   /mode              Cycle mode (default → auto-approve → plan-only)
@@ -118,7 +123,7 @@ def _cmd_new(args, agent, config) -> str:
     if _session_manager:
         _session_manager.create_session(new_session_id, description=description)
     desc = f" — {description}" if description else ""
-    return f"\033[1;32mNew session:\033[0m {new_session_id}{desc}"
+    return f"{_AL}New session:{_R} {new_session_id}{desc}"
 
 
 def _cmd_model(args, agent, config) -> str:
@@ -132,24 +137,24 @@ def _cmd_model(args, agent, config) -> str:
         if not models:
             # No predefined list (vllm etc.) — show info + usage
             lines = [
-                f"\033[1mCurrent model:\033[0m {model_name}",
-                f"\033[1mProvider:\033[0m {provider}",
+                f"{_B}Current model:{_R} {model_name}",
+                f"{_B}Provider:{_R} {provider}",
                 "",
-                "\033[0;90mUsage: /model <model-name>\033[0m",
+                f"{_D}Usage: /model <model-name>{_R}",
             ]
             return "\n".join(lines)
 
         # Show numbered list
-        print(f"\033[1mCurrent model:\033[0m {model_name}")
-        print(f"\033[1mProvider:\033[0m {provider}")
+        print(f"{_B}Current model:{_R} {model_name}")
+        print(f"{_B}Provider:{_R} {provider}")
         print()
         print(f"  Select model:")
         print()
         for i, (mid, display, note) in enumerate(models, 1):
-            marker = " \033[1;36m← current\033[0m" if mid == model_name else ""
-            note_str = f" \033[0;90m({note})\033[0m" if note else ""
-            print(f"    \033[1m{i})\033[0m {display:<22}{note_str}{marker}")
-        print(f"    \033[1mc)\033[0m \033[0;90mCustom model ID...\033[0m")
+            marker = f" {_BL}← current{_R}" if mid == model_name else ""
+            note_str = f" {_D}({note}){_R}" if note else ""
+            print(f"    {_B}{i}){_R} {display:<22}{note_str}{marker}")
+        print(f"    {_B}c){_R} {_D}Custom model ID...{_R}")
         print()
 
         while True:
@@ -171,9 +176,9 @@ def _cmd_model(args, agent, config) -> str:
                     if selected == model_name:
                         return f"Already using: {model_name}"
                     return f"__model_change__:{selected}"
-                print(f"  \033[1;31m1-{len(models)} 사이의 숫자 또는 'c'를 입력하세요.\033[0m")
+                print(f"  {_CP}1-{len(models)} 사이의 숫자 또는 'c'를 입력하세요.{_R}")
             except ValueError:
-                print(f"  \033[1;31m1-{len(models)} 사이의 숫자 또는 'c'를 입력하세요.\033[0m")
+                print(f"  {_CP}1-{len(models)} 사이의 숫자 또는 'c'를 입력하세요.{_R}")
             except (EOFError, KeyboardInterrupt):
                 return f"Keeping current model: {model_name}"
 
@@ -210,13 +215,13 @@ def _cmd_session(args, agent, config) -> str:
     try:
         state = agent.get_state(config)
         if state and state.next:
-            info_lines.append(f"  \033[1;33mPending interrupt at: {state.next}\033[0m")
+            info_lines.append(f"  {_AM}Pending interrupt at: {state.next}{_R}")
     except Exception:
         pass
 
     info_lines.append("")
-    info_lines.append("\033[0;90mUsage: /session <id_or_number> to switch\033[0m")
-    info_lines.append("\033[0;90m       /sessions to list all sessions\033[0m")
+    info_lines.append(f"{_D}Usage: /session <id_or_number> to switch{_R}")
+    info_lines.append(f"{_D}       /sessions to list all sessions{_R}")
 
     return "\n".join(info_lines)
 
@@ -272,7 +277,7 @@ def _switch_session(target: str, agent, config) -> str:
 
     desc = f" — {target_session.description}" if target_session.description else ""
     return (
-        f"\033[1;32mSwitched to session:\033[0m {target_session.session_id}{desc}\n"
+        f"{_AL}Switched to session:{_R} {target_session.session_id}{desc}\n"
         f"  Turns: {target_session.turn_count} · Messages: {msg_count}"
     )
 
@@ -286,14 +291,14 @@ def _cmd_sessions(args, agent, config) -> str:
         return "No sessions found."
 
     current_id = config["configurable"]["thread_id"]
-    lines = ["\033[1mSessions:\033[0m  \033[0;90m(use /session <number> to switch)\033[0m"]
+    lines = [f"{_B}Sessions:{_R}  {_D}(use /session <number> to switch){_R}"]
     for i, s in enumerate(sessions, 1):
         age = _format_age(time.time() - s.created_at)
         active = _format_age(time.time() - s.last_active)
         desc = f" — {s.description}" if s.description else ""
-        marker = " \033[1;36m◀ current\033[0m" if s.session_id == current_id else ""
+        marker = f" {_BL}◀ current{_R}" if s.session_id == current_id else ""
         lines.append(
-            f"  \033[1;33m{i:>2}\033[0m) {s.session_id}  "
+            f"  {_AM}{i:>2}{_R}) {s.session_id}  "
             f"({s.turn_count} turns, {age} ago){desc}{marker}"
         )
     return "\n".join(lines)
@@ -339,7 +344,8 @@ def _cmd_skill(args, agent, config) -> str:
     subargs = parts[1] if len(parts) > 1 else ""
 
     if subcmd == "list" or subcmd == "ls":
-        return f"\033[1mSkills:\033[0m\n{_skill_manager.format_list()}"
+        return f"{_B}Skills:{_R}\n{_skill_manager.format_list()}"
+
 
     if subcmd == "add":
         return _skill_add_interactive(subargs)
@@ -362,8 +368,8 @@ def _cmd_skill(args, agent, config) -> str:
             return "Missing source URL."
         msg, path = _skill_manager.install_skill(source, skill_name=skill_name)
         if path:
-            return f"\033[0;32m✓\033[0m {msg} → {path}"
-        return f"\033[1;31m✗\033[0m {msg}"
+            return f"{_AL}✓{_R} {msg} → {path}"
+        return f"{_CP}✗{_R} {msg}"
 
     if subcmd == "remove" or subcmd == "rm":
         if not subargs:
@@ -374,7 +380,7 @@ def _cmd_skill(args, agent, config) -> str:
         return "__skill_reload__"
 
     return (
-        "\033[1mSkill commands:\033[0m\n"
+        f"{_B}Skill commands:{_R}\n"
         "  /skill list                                Show installed skills\n"
         "  /skill add <name>                          Create a new skill interactively\n"
         "  /skill install <url>                       Install single SKILL.md\n"
@@ -417,7 +423,7 @@ def _skill_add_interactive(name: str) -> str:
 
     content = "\n".join(lines) + "\n"
     path = _skill_manager.add_skill(name, description or name, content, tools, scope)
-    return f"\033[0;32m✓\033[0m Saved to {path}"
+    return f"{_AL}✓{_R} Saved to {path}"
 
 
 def _cmd_tasks(args, agent, config) -> str:
@@ -428,7 +434,7 @@ def _cmd_tasks(args, agent, config) -> str:
             return "No active session."
 
         if hasattr(state, "tasks") and state.tasks:
-            lines = ["\033[1mActive tasks:\033[0m"]
+            lines = [f"{_B}Active tasks:{_R}"]
             for i, task in enumerate(state.tasks, 1):
                 name = getattr(task, "name", "unknown")
                 status = "pending"
@@ -443,7 +449,7 @@ def _cmd_tasks(args, agent, config) -> str:
 
 def _cmd_status(args, agent, config) -> str:
     """Show agent status summary."""
-    lines = ["\033[1mAgent Status:\033[0m"]
+    lines = [f"{_B}Agent Status:{_R}"]
 
     # Session info
     session_id = config["configurable"]["thread_id"]

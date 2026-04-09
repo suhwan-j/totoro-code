@@ -5,12 +5,8 @@ import sys
 
 from atom.utils import sanitize_text
 
-# ANSI colors
-_DIM = "\033[0;90m"
-_GREEN = "\033[0;32m"
-_RED = "\033[1;31m"
-_CYAN = "\033[0;36m"
-_RESET = "\033[0m"
+# ANSI colors (palette-based)
+from atom.colors import DIM as _DIM, AMBER_LT as _GREEN, COPPER as _RED, BLUE as _CYAN, RESET as _RESET
 
 
 def find_line_number(file_path: str, search_text: str) -> int | None:

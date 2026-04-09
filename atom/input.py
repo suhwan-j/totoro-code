@@ -12,36 +12,45 @@ from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.styles import Style
 
 # Mode definitions
+from atom.colors import (
+    RESET, BOLD,
+    DIM, BLUE, BLUE_LT, AMBER, AMBER_LT, IVORY, IVORY_DK, COPPER,
+)
+
 MODES = ["default", "auto-approve", "plan-only"]
 MODE_ICONS = {
     "default": "◆",
     "auto-approve": "⚡",
     "plan-only": "📋",
 }
-# bg color, fg on bg, line color, line char
+# bg color (truecolor bg), line color, line char
+# bg: \033[48;2;R;G;Bm  fg on bg: dark text
+_BG_BLUE   = "\033[48;2;86;160;240m\033[38;2;13;17;23m"    # #56A0F0 bg, #0D1117 text
+_BG_AMBER  = "\033[48;2;245;178;64m\033[38;2;13;17;23m"   # #F5B240 bg, #0D1117 text
+_BG_IVORY  = "\033[48;2;212;186;142m\033[38;2;13;17;23m"  # #D4BA8E bg, #0D1117 text
 MODE_THEME = {
-    "default":       ("\033[42m\033[1;30m", "\033[0;32m", "─"),       # green bg, green line
-    "auto-approve":  ("\033[43m\033[1;30m", "\033[0;33m", "━"),       # yellow bg, yellow bold line
-    "plan-only":     ("\033[46m\033[1;30m", "\033[0;36m", "┄"),       # cyan bg, cyan dashed line
+    "default":       (_BG_BLUE,  BLUE,  "─"),
+    "auto-approve":  (_BG_AMBER, AMBER, "━"),
+    "plan-only":     (_BG_IVORY, IVORY, "┄"),
 }
 MODE_LABELS = {
-    "default": "\033[1;32mdefault\033[0m",
-    "auto-approve": "\033[1;33mauto-approve\033[0m",
-    "plan-only": "\033[1;36mplan-only\033[0m",
+    "default": f"{BLUE}default{RESET}",
+    "auto-approve": f"{AMBER}auto-approve{RESET}",
+    "plan-only": f"{IVORY}plan-only{RESET}",
 }
-_DIM = "\033[0;90m"
-_RESET = "\033[0m"
-_BOLD = "\033[1m"
+_DIM = DIM
+_RESET = RESET
+_BOLD = BOLD
 
-# prompt_toolkit style
+# prompt_toolkit style — palette-based
 _STYLE = Style.from_dict({
-    "completion-menu":                "bg:#1a1a2e #e0e0e0",
-    "completion-menu.completion":     "bg:#1a1a2e #e0e0e0",
-    "completion-menu.completion.current": "bg:#16213e #00d4ff bold",
-    "completion-menu.meta":           "bg:#1a1a2e #888888",
-    "completion-menu.meta.current":   "bg:#16213e #aaddff",
-    "scrollbar.background":           "bg:#1a1a2e",
-    "scrollbar.button":               "bg:#333355",
+    "completion-menu":                "bg:#0D1117 #A8CFFA",
+    "completion-menu.completion":     "bg:#0D1117 #A8CFFA",
+    "completion-menu.completion.current": "bg:#1A5FA8 #F5ECD8 bold",
+    "completion-menu.meta":           "bg:#0D1117 #60503A",
+    "completion-menu.meta.current":   "bg:#1A5FA8 #D4BA8E",
+    "scrollbar.background":           "bg:#0D1117",
+    "scrollbar.button":               "bg:#60503A",
     # Transparent background for bottom toolbar
     "bottom-toolbar":                 "noreverse",
     "bottom-toolbar.text":            "noreverse",
@@ -115,8 +124,8 @@ class InputHandler:
     def mode_top_bar(self) -> str:
         """Top bar:  ──────────── DEFAULT ──  with colored bg label and themed line."""
         import shutil
-        width = min(shutil.get_terminal_size().columns, 120)
-        bg_style, line_color, line_char = MODE_THEME.get(self.mode, ("\033[47m\033[1;30m", _DIM, "─"))
+        width = shutil.get_terminal_size().columns
+        bg_style, line_color, line_char = MODE_THEME.get(self.mode, (_BG_BLUE, _DIM, "─"))
         label = f" {self.mode.upper()} "
         # ─────────── DEFAULT ──
         tag_len = len(label) + 4  # " " + label + " " + "──"
@@ -126,18 +135,19 @@ class InputHandler:
     def mode_bottom_bar(self) -> str:
         """Bottom bar: themed separator line."""
         import shutil
-        width = min(shutil.get_terminal_size().columns, 120)
-        _, line_color, line_char = MODE_THEME.get(self.mode, ("\033[47m\033[1;30m", _DIM, "─"))
+        width = shutil.get_terminal_size().columns
+        _, line_color, line_char = MODE_THEME.get(self.mode, (_BG_BLUE, _DIM, "─"))
         return f"{line_color}{line_char * width}{_RESET}"
 
     @property
     def prompt_html(self) -> HTML:
         """Build prompt as HTML with top bar included for live mode switching."""
         import shutil
-        width = min(shutil.get_terminal_size().columns, 120)
-        _, _, line_char = MODE_THEME.get(self.mode, ("\033[47m\033[1;30m", _DIM, "─"))
+        width = shutil.get_terminal_size().columns
+        _, _, line_char = MODE_THEME.get(self.mode, (_BG_BLUE, DIM, "─"))
         label = self.mode.upper()
-        line_fg = {"default": "ansigreen", "auto-approve": "ansiyellow", "plan-only": "ansicyan"}.get(self.mode, "ansigray")
+        line_fg = {"default": "#56A0F0", "auto-approve": "#F5B240", "plan-only": "#D4BA8E"}.get(self.mode, "#60503A")
+        tag_bg = {"default": "#56A0F0", "auto-approve": "#F5B240", "plan-only": "#D4BA8E"}.get(self.mode, "#56A0F0")
         icon = MODE_ICONS.get(self.mode, "◆")
 
         pad = width - len(label) - 6
@@ -145,7 +155,7 @@ class InputHandler:
 
         return HTML(
             f'<style fg="{line_fg}">{bar}</style>'
-            f' <style bg="{line_fg}" fg="ansiblack" bold="true"> {label} </style>'
+            f' <style bg="{tag_bg}" fg="#0D1117" bold="true"> {label} </style>'
             f' <style fg="{line_fg}">{line_char}{line_char}</style>\n'
             f'<style fg="{line_fg}" bold="true">{icon} &gt; </style>'
         )
@@ -154,11 +164,8 @@ class InputHandler:
     def prompt(self) -> str:
         """Plain ANSI prompt string (for non-prompt_toolkit contexts)."""
         icon = MODE_ICONS.get(self.mode, "◆")
-        if self.mode == "default":
-            return f"\033[1;32m{icon} > \033[0m"
-        if self.mode == "auto-approve":
-            return f"\033[1;33m{icon} > \033[0m"
-        return f"\033[1;36m{icon} > \033[0m"
+        color = {"default": BLUE, "auto-approve": AMBER, "plan-only": IVORY}.get(self.mode, BLUE)
+        return f"{color}{_BOLD}{icon} > {_RESET}"
 
     @property
     def is_auto_approve(self) -> bool:
@@ -171,16 +178,16 @@ class InputHandler:
     def _bottom_toolbar(self):
         """Dim line + next-mode hint (always visible during input)."""
         import shutil
-        width = min(shutil.get_terminal_size().columns, 120)
+        width = shutil.get_terminal_size().columns
         idx = MODES.index(self.mode)
         next_mode = MODES[(idx + 1) % len(MODES)]
-        next_fg = {"default": "ansigreen", "auto-approve": "ansiyellow", "plan-only": "ansicyan"}.get(next_mode, "ansigray")
+        next_fg = {"default": "#56A0F0", "auto-approve": "#F5B240", "plan-only": "#D4BA8E"}.get(next_mode, "#60503A")
         bar = '─' * width
         return HTML(
-            f'<style fg="ansigray">{bar}</style>\n'
-            f'<style fg="ansigray">⏵⏵ </style>'
+            f'<style fg="#60503A">{bar}</style>\n'
+            f'<style fg="#60503A">⏵⏵ </style>'
             f'<style fg="{next_fg}" bold="true">{next_mode}</style>'
-            f'<style fg="ansigray"> on (shift+tab)</style>'
+            f'<style fg="#60503A"> on (shift+tab)</style>'
         )
 
     def read_input(self) -> str | None:
@@ -205,21 +212,16 @@ def pick_command() -> str | None:
     Returns the selected command string (e.g. "/model") or None if cancelled.
     """
     from atom.commands.registry import COMMAND_LIST
+    from atom.colors import DIM as _D, BLUE as _B, AMBER as _A, BODY as _BT, RESET as _R, BOLD as _BO
 
-    DIM = "\033[0;90m"
-    CYAN = "\033[1;36m"
-    BOLD = "\033[1m"
-    YELLOW = "\033[1;33m"
-    R = "\033[0m"
-
-    print(f"{DIM}  ── Commands ──{R}")
+    print(f"{_D}  ── Commands ──{_R}")
     for i, (cmd, desc) in enumerate(COMMAND_LIST):
-        num = f"{YELLOW}{i + 1:>2}{R}"
-        print(f"  {num}) {CYAN}{cmd:<14}{R} {DIM}{desc}{R}")
-    print(f"{DIM}  Enter number or command name (q to cancel){R}")
+        num = f"{_A}{i + 1:>2}{_R}"
+        print(f"  {num}) {_B}{cmd:<14}{_R} {_D}{desc}{_R}")
+    print(f"{_D}  Enter number or command name (q to cancel){_R}")
 
     try:
-        choice = input(f"  {BOLD}#{R} ").strip()
+        choice = input(f"  {_BO}#{_R} ").strip()
     except (EOFError, KeyboardInterrupt):
         return None
 
@@ -244,14 +246,15 @@ def pick_command() -> str | None:
     if len(matches) == 1:
         return matches[0]
 
-    print(f"  {DIM}Unknown: {choice}{R}")
+    print(f"  {_D}Unknown: {choice}{_R}")
     return None
 
 
 def format_mode_help() -> str:
     """Format mode descriptions for /help output."""
+    from atom.colors import BOLD as _BO, RESET as _R
     lines = [
-        "  \033[1mModes\033[0m (cycle with \033[1mShift+Tab\033[0m or \033[1m/mode\033[0m):",
+        f"  {_BO}Modes{_R} (cycle with {_BO}Shift+Tab{_R} or {_BO}/mode{_R}):",
     ]
     for mode in MODES:
         icon = MODE_ICONS[mode]

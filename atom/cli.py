@@ -36,32 +36,84 @@ def _ensure_imports():
 
 
 # ─── Pending tool calls for diff display ───
-_pending_file_ops: dict[str, dict] = {}  # tool_call_id -> {name, args}
+def _banner(config=None, session_id: str = "") -> str:
+    import shutil
+    from atom.colors import ACCENT, BODY, SECONDARY, DIM, RESET
+    width = shutil.get_terminal_size().columns
 
+    model_name = config.model if config else "unknown"
+    provider = config.provider if config else "auto"
 
-def _banner() -> str:
-    C = "\033[1;36m"   # cyan
-    Y = "\033[1;33m"   # yellow
-    W = "\033[0;37m"   # white
-    D = "\033[0;90m"   # dim
-    R = "\033[0m"      # reset
-    lines = [
-        f"",
-        f"{C}        .     *    .        .   *     .        ",
-        f"{C}    .        ___         .        .            ",
-        f"{C}        .  /     \\  *        .          .      ",
-        f"{C}   *     ./  {Y}@ @{C}  \\.    .        *       .    ",
-        f"{C}    .   /  \\  {Y}'{C}  /  \\        .               ",
-        f"{C}       |    '---'    |  .    {Y} ____  ______  ____  __  __{C}",
-        f"{C}    .  |  \\       /  |       {Y}|    ||__  __||    ||  \\/  |{C}",
-        f"{C}       \\   '.___.'   /    .  {Y}| || |  |  |  | || || |\\/| |{C}",
-        f"{C}    .   \\___________/        {Y}|_||_|  |  |  |_||_||_|  |_|{C}",
-        f"{C}         /  | | |  \\    *                              ",
-        f"{C}    *   /   | | |   \\       {W} Advanced CLI Coding Agent{C}",
-        f"{C}       '----' ' '----'  .   {D} Powered by suhwan-j{R}",
-        f"",
+    A, R = ACCENT, RESET
+
+    # TOTORO block letters
+    _T = ["████████╗", "╚══██╔══╝", "   ██║   ", "   ██║   ", "   ██║   ", "   ╚═╝   "]
+    _O = [" ██████╗ ", "██╔═══██╗", "██║   ██║", "██║   ██║", "╚██████╔╝", " ╚═════╝ "]
+    _Rv = ["██████╗  ", "██╔══██╗ ", "██████╔╝ ", "██╔══██╗ ", "██║  ██║ ", "╚═╝  ╚═╝ "]
+    logo_raw = ["".join(l[i] for l in [_T, _O, _T, _O, _Rv, _O]) for i in range(6)]
+
+    # Mascot — Totoro (raw for width calc)
+    mascot_raw = [
+        "        ███                     ███",
+        "       █████                   ████",
+        "       █████                   ████",
+        "        ███                    ███",
+        "          ███████████████████████",
+        "       ███████████████████████████",
+        "      █████ ▄██▄ ████████ ▄██▄ █████",
+        "     ╲████ █▀▀▀█ ████████ █▀▀▀█ ████╱",
+        "   ───████ █●░░█ ████████ █●░░█ ████───",
+        "      ╱███ ▀██▀ ████▼████ ▀██▀ ████ ╲",
+        "        ███████████░▄▄░██████████",
+        "      ▐███░░░░░░░░░░░░░░░░░░░░░░███▌",
+        "     ███░░░░░▄▀▀▀▄░░░░░░░▄▀▀▀▄░░░░░███",
+        "  |██░░░░░▄▀▀▀▄░░░░▄▀▀▀▄░░░░▄▀▀▀▄░░░░██|",
+        " ▐|█░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░█|▌",
+        " █|░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|█",
+        "▐█|░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|█▌",
+        " █|░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|█",
+        " ▐|░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░|▌",
+        "   ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░",
+        "    ░░░ ▄██▄ ░░░░░░░░░░░░░░░ ▄██▄ ░░",
+        "══════ ██████ ░░░░░░░░░░░░░ ██████ ═════",
+        "        ▀███▀               ▀███▀",
     ]
+    mascot_w = max(len(l) for l in mascot_raw)
+    mascot_h = len(mascot_raw)
+
+
+    # Right panel content — logo on top, then info
+    # Build right-side lines to match mascot height
+    right = [""] * mascot_h
+
+    # Vertically center logo + info block within mascot height
+    # Logo(6) + blank(1) + info(2) + blank(1) + info(2) = 12 rows
+    content_h = 12
+    offset = max(0, (mascot_h - content_h) // 2)
+
+    for i, l in enumerate(logo_raw):
+        right[offset + i] = f"{A}{l}{R}"
+
+    right[offset + 7]  = f"{SECONDARY}Model{R}     {DIM}│{R}  {BODY}{model_name}{R}"
+    right[offset + 8]  = f"{SECONDARY}Provider{R}  {DIM}│{R}  {BODY}{provider}{R}"
+    right[offset + 10] = f"{SECONDARY}Session{R}   {DIM}│{R}  {BODY}{session_id}{R}"
+    right[offset + 11] = f"{SECONDARY}Commands{R}  {DIM}│{R}  {BODY}/help{R}  {DIM}·{R}  {BODY}Shift+Tab{R}  {DIM}·{R}  {BODY}/exit{R}"
+
+    # Divider character
+    div = f" {DIM}│{R} "
+
+    top = f"{DIM}{'━' * width}{R}"
+    bot = f"{DIM}{'━' * width}{R}"
+
+    lines = ["", top, ""]
+    for i in range(mascot_h):
+        ml = mascot_raw[i].ljust(mascot_w)
+        lines.append(f" {A}{ml}{R}{div}{right[i]}")
+    lines.extend(["", bot, ""])
     return "\n".join(lines)
+
+
+_pending_file_ops: dict[str, dict] = {}  # tool_call_id -> {name, args}
 
 
 def _is_slash_command(text: str) -> bool:
@@ -71,14 +123,16 @@ def _is_slash_command(text: str) -> bool:
     return any(first_word == cmd or first_word.startswith(cmd + " ") for cmd in get_command_names())
 
 
-# ─── ANSI formatting helpers ───
-_DIM = "\033[0;90m"
-_BLUE = "\033[0;34m"
-_MAGENTA = "\033[0;35m"
-_YELLOW = "\033[1;33m"
-_BOLD = "\033[1m"
-_RED = "\033[1;31m"
-_RESET = "\033[0m"
+# ─── ANSI formatting helpers (palette-based) ───
+from atom.colors import (
+    RESET as _RESET, BOLD as _BOLD, DIM as _DIM,
+    BLUE as _BLUE, BODY as _BODY, SECONDARY as _SECONDARY,
+    AMBER as _AMBER, AMBER_LT as _AMBER_LT,
+    COPPER as _RED, WARN as _WARN,
+    ACCENT as _ACCENT,
+)
+_YELLOW = _AMBER
+_MAGENTA = _SECONDARY
 
 
 def main():
@@ -177,9 +231,9 @@ def _run_interactive(agent, invoke_config: dict, session_manager=None,
 
     handler = InputHandler(initial_mode="auto-approve" if auto_approve else "default")
 
-    print(_banner())
-    print(f"  Session: {invoke_config['configurable']['thread_id']}")
-    print(f"  Type \033[1m/help\033[0m for commands, \033[1mShift+Tab\033[0m to change mode, \033[1m/exit\033[0m to quit.\n")
+    session_id = invoke_config['configurable']['thread_id']
+    print(_banner(config, session_id=session_id))
+    print()
 
     while True:
         user_input = handler.read_input()

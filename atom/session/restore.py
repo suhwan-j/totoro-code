@@ -1,4 +1,5 @@
 """Session restore — handles resuming from checkpointed state."""
+from atom.colors import AMBER_LT, AMBER, COPPER, RESET
 
 
 def restore_session(agent, session_id: str, session_manager=None) -> dict | None:
@@ -12,7 +13,7 @@ def restore_session(agent, session_id: str, session_manager=None) -> dict | None
     try:
         state = agent.get_state(config)
     except Exception as e:
-        print(f"\033[1;31mError restoring session '{session_id}': {e}\033[0m")
+        print(f"{COPPER}Error restoring session '{session_id}': {e}{RESET}")
         return None
 
     if state is None or not state.values:
@@ -27,12 +28,12 @@ def restore_session(agent, session_id: str, session_manager=None) -> dict | None
     # Report state
     messages = state.values.get("messages", [])
     turn_count = sum(1 for m in messages if getattr(m, "type", None) == "human")
-    print(f"\033[1;32mSession '{session_id}' restored.\033[0m")
+    print(f"{AMBER_LT}Session '{session_id}' restored.{RESET}")
     print(f"  Messages: {len(messages)}, User turns: {turn_count}")
 
     # Check for pending interrupts
     if state.next:
-        print(f"  \033[1;33mPending interrupt at: {state.next}\033[0m")
+        print(f"  {AMBER}Pending interrupt at: {state.next}{RESET}")
         if hasattr(state, "tasks") and state.tasks:
             for task in state.tasks:
                 interrupt_val = None

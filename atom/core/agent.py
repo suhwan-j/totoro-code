@@ -153,7 +153,8 @@ def _create_checkpointer():
         return saver
     except Exception as e:
         import sys
-        print(f"\033[0;90m  [warn] SQLite checkpointer failed ({e}), using in-memory\033[0m", file=sys.stderr)
+        from atom.colors import DIM, RESET
+        print(f"{DIM}  [warn] SQLite checkpointer failed ({e}), using in-memory{RESET}", file=sys.stderr)
         return MemorySaver()
 
 
