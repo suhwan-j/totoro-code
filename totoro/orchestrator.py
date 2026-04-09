@@ -196,6 +196,16 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
                     if t.get("type") != "catbus":
                         execution_tasks.append(t)
 
+    # Cap task count to prevent spawning too many subagents
+    MAX_PARALLEL_TASKS = 5
+    if len(execution_tasks) > MAX_PARALLEL_TASKS:
+        import sys as _sys
+        print(
+            f"  [info] Plan has {len(execution_tasks)} tasks, capping to {MAX_PARALLEL_TASKS}",
+            file=_sys.stderr, flush=True,
+        )
+        execution_tasks = execution_tasks[:MAX_PARALLEL_TASKS]
+
     if not execution_tasks:
         # Parsing failed — fall back to delegating original task to satsuki
         # Extract original task description from catbus tasks
