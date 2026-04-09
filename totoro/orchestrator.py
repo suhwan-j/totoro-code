@@ -169,8 +169,13 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
                         execution_tasks.append(t)
 
     if not execution_tasks:
-        # Couldn't parse plan — return catbus output as-is for the main agent to handle
-        return "\n\n".join(plan_summary_parts) + "\n\n[Auto-dispatch: no executable tasks found in plan]"
+        # Couldn't parse plan — return catbus output with debug hint
+        hint = (
+            "[Auto-dispatch failed] Could not parse executable tasks from catbus plan.\n"
+            "Expected a ```plan\\n[{\"type\":\"satsuki\",\"task\":\"...\"}]\\n``` block.\n"
+            "You should call orchestrate_tool again with specific tasks."
+        )
+        return "\n\n".join(plan_summary_parts) + "\n\n" + hint
 
     # Phase 2: Run execution agents
     exec_results = _run_parallel(execution_tasks)
@@ -277,8 +282,14 @@ def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
         tui = SplitPaneTUI(tracker=_tracker, pane_manager=_pane_manager)
         try:
             _curses.wrapper(tui.run)
-        except Exception:
-            pass  # Ensure curses exits cleanly
+        except Exception as e:
+            # Restore terminal state and log error
+            try:
+                _curses.endwin()
+            except Exception:
+                pass
+            import sys as _sys
+            print(f"  [warn] TUI error: {e}", file=_sys.stderr, flush=True)
         # Panel stays disabled — render_final_summary in cli.py will handle cleanup
 
     # Stop monitor
@@ -292,9 +303,12 @@ def _run_parallel(tasks: list[dict]) -> dict[str, SubagentResult | str]:
 
         # Force kill if still alive
         if p.is_alive():
+            import sys as _sys
+            print(f"\n  [warn] {label}: timed out, terminating...", file=_sys.stderr, flush=True)
             p.terminate()
             p.join(timeout=5)
         if p.is_alive():
+            print(f"  [warn] {label}: force killing", file=_sys.stderr, flush=True)
             p.kill()
             p.join(timeout=2)
 
