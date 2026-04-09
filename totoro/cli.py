@@ -611,6 +611,15 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
                     for msg in messages:
                         msg_type = getattr(msg, "type", None)
                         if msg_type == "ai":
+                            # Track token usage from main agent
+                            usage = getattr(msg, "usage_metadata", None) or {}
+                            if not usage:
+                                meta = getattr(msg, "response_metadata", {})
+                                usage = meta.get("token_usage", meta.get("usage", {}))
+                            if usage:
+                                tracker.token_input += usage.get("input_tokens", usage.get("prompt_tokens", 0))
+                                tracker.token_output += usage.get("output_tokens", usage.get("completion_tokens", 0))
+
                             tool_calls = getattr(msg, "tool_calls", [])
                             for tc in tool_calls:
                                 tc_name = tc.get("name", "")

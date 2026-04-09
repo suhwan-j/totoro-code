@@ -96,6 +96,8 @@ class StatusTracker:
         self.current_tool: str | None = None
         self.current_tool_args: str = ""
         self.tool_count: int = 0
+        self.token_input: int = 0   # Total input tokens (main agent)
+        self.token_output: int = 0  # Total output tokens (main agent)
         self.phase: str = "Initializing"
         self._last_panel_lines: int = 0
         self._panel_enabled: bool = True
@@ -285,6 +287,12 @@ class StatusTracker:
         counters.append(f"Tools: {self.tool_count}")
         if agent_count > 0:
             counters.append(f"Agents: {agent_count}")
+        total_tok = self.token_input + self.token_output
+        if self._pane_manager:
+            for p in self._pane_manager.get_panes():
+                total_tok += p.token_input + p.token_output
+        if total_tok > 0:
+            counters.append(_format_tokens(total_tok))
         counter_str = f" {_DIM}{' · '.join(counters)}{_RESET}"
 
         spinner = _SPINNER[self._spinner_idx]
@@ -406,17 +414,18 @@ class StatusTracker:
             self._clear_previous()
             self._last_panel_lines = 0
 
-        # Only show summary when there's meaningful activity (plan or subagents)
+        # Only show summary when there's meaningful activity
         total = len(self.todos)
         agent_total = len(self.completed_subagents)
-        if total == 0 and agent_total == 0:
+        has_tokens = (self.token_input + self.token_output) > 0
+        if total == 0 and agent_total == 0 and not has_tokens:
             return
 
         width = shutil.get_terminal_size().columns - 2
         done = sum(1 for t in self.todos if t.status == "completed")
 
-        # Collect total tokens from pane manager
-        total_tokens = 0
+        # Collect total tokens: main agent + subagents
+        total_tokens = self.token_input + self.token_output
         if self._pane_manager:
             for pane in self._pane_manager.get_panes():
                 total_tokens += pane.token_input + pane.token_output

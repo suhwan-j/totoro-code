@@ -468,6 +468,13 @@ def _cmd_status(args, agent, config) -> str:
             tool_msgs = sum(1 for m in messages if getattr(m, "type", None) == "tool")
             lines.append(f"  Messages: {len(messages)} (human: {human_msgs}, ai: {ai_msgs}, tool: {tool_msgs})")
             lines.append(f"  Est. tokens: ~{token_est:,}")
+            # Context usage percentage (assuming 200k window)
+            context_window = 200_000
+            usage_pct = (token_est / context_window) * 100
+            bar_w = 20
+            filled = int(usage_pct / 100 * bar_w)
+            bar = "█" * filled + "░" * (bar_w - filled)
+            lines.append(f"  Context: [{bar}] {usage_pct:.1f}%")
     except Exception:
         lines.append("  Messages: (unable to read state)")
 
