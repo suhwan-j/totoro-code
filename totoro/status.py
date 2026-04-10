@@ -369,7 +369,12 @@ class StatusTracker:
                 # Token + tool stats line
                 stats_parts = [f"{elapsed_str}", f"{tool_count} tools"]
                 if token_in or token_out:
-                    stats_parts.append(_format_tokens(token_in + token_out))
+                    tok_total = token_in + token_out
+                    tok_str = _format_tokens(tok_total)
+                    token_cached = getattr(pane, "token_cached", 0) if pane else 0
+                    if token_cached > 0:
+                        tok_str += f" [{_format_tokens(token_cached)} cached]"
+                    stats_parts.append(tok_str)
                 lines.append(f"     {_DIM}{' · '.join(stats_parts)}{_RESET}")
 
                 # Tool history (last 5) + current tool
