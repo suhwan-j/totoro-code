@@ -2,15 +2,16 @@
 
 > **구현 스택**: Python 3.11+ / DeepAgents / LangGraph / LangChain  
 > **이 문서**: 기술적 구현 청사진. 무엇을 만들지는 AGENTS.md, 어떻게 만들지는 이 문서.  
-> **핵심 원칙**: DeepAgents 프레임워크가 제공하는 것은 그대로 사용. TOTORO-CODE는 프레임워크 위에 커스텀 레이어만 추가.
+> **핵심 원칙**: DeepAgents/LangChain 프레임워크의 `create_agent()`를 직접 사용. 미들웨어 스택을 명시적으로 제어하여 불필요한 오버헤드를 제거.
 
 ---
 
 ## 1. 시스템 개요
 
-TOTORO-CODE는 DeepAgents 프레임워크의 `create_deep_agent()`를 중심으로 구축된 CLI 코딩 에이전트다.
-프레임워크가 StateGraph, 미들웨어, 내장 도구, 서브에이전트 관리, HITL, 스킬을 모두 처리하므로
-TOTORO-CODE는 **커스텀 도구 + 커스텀 레이어**만 구현한다.
+TOTORO-CODE는 LangChain의 `create_agent()`를 직접 사용하여 구축된 CLI 코딩 에이전트다.
+DeepAgents의 `create_deep_agent()` 대신 하위 API를 사용하여 미들웨어 스택을 명시적으로
+제어하고, 불필요한 SubAgentMiddleware(task 도구, ~2,178 토큰 오버헤드)를 제거했다.
+TOTORO-CODE는 자체 `orchestrate_tool`로 서브에이전트를 관리한다.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
@@ -26,8 +27,8 @@ TOTORO-CODE는 **커스텀 도구 + 커스텀 레이어**만 구현한다.
 │                         ▼                                           │
 │  ┌─────────────────────────────────────────────────────────────┐   │
 │  │                                                             │   │
-│  │              create_deep_agent("totoro", ...)               │   │
-│  │              ═══════════════════════════════                 │   │
+│  │              create_agent("totoro", ...)                     │   │
+│  │              ═════════════════════════════                   │   │
 │  │                                                             │   │
 │  │  ┌───────────────────────────────────────────────────┐     │   │
 │  │  │  DeepAgents 프레임워크 자동 제공                    │     │   │
@@ -36,10 +37,10 @@ TOTORO-CODE는 **커스텀 도구 + 커스텀 레이어**만 구현한다.
 │  │  │           HumanInTheLoop, Skills, Memory          │     │   │
 │  │  │                                                   │     │   │
 │  │  │  내장 도구: write_todos, ls, read_file, write_file,│     │   │
-│  │  │           edit_file, glob, grep, task             │     │   │
+│  │  │           edit_file, glob, grep                   │     │   │
+│  │  │  (task 도구 제외 — orchestrate_tool로 대체)       │     │   │
 │  │  │                                                   │     │   │
 │  │  │  HITL: interrupt_on → Command(resume=...)         │     │   │
-│  │  │  서브에이전트: 선언적 config → task 도구           │     │   │
 │  │  └───────────────────────────────────────────────────┘     │   │
 │  │                                                             │   │
 │  │  ┌───────────────────────────────────────────────────┐     │   │
@@ -67,12 +68,12 @@ TOTORO-CODE는 **커스텀 도구 + 커스텀 레이어**만 구현한다.
 
 ### 프레임워크 vs 커스텀 경계
 
-| 영역 | DeepAgents 자동 제공 | TOTORO-CODE 커스텀 구현                           |
+| 영역 | 프레임워크 제공 (선택적 사용) | TOTORO-CODE 커스텀 구현                           |
 |------|---------------------|--------------------------------------------|
-| 그래프 구조 | StateGraph, 노드, 엣지, 라우팅 | -                                          |
-| 미들웨어 | TodoList, Filesystem, SubAgent, HITL, Skills, Memory | Stall Detection, Context Compaction        |
-| 내장 도구 | write_todos, ls, read_file, write_file, edit_file, glob, grep, task | git, bash, web_search, fetch_url, ask_user |
-| 서브에이전트 | 선언적 config, task 도구, 생명주기 관리 | -                                          |
+| 그래프 구조 | create_agent(), StateGraph | -                                          |
+| 미들웨어 | TodoList, Filesystem, HITL, Skills, Summarization, PatchToolCalls | Sanitize, Stall Detection, Context Compaction, Auto-Dream |
+| 내장 도구 | write_todos, ls, read_file, write_file, edit_file, glob, grep | git, web_search, fetch_url, ask_user, orchestrate |
+| 서브에이전트 | ~~SubAgentMiddleware (task 도구)~~ **제거** | orchestrate_tool (multiprocessing 병렬 실행) |
 | HITL | interrupt_on, Command(resume=...) | interrupt 기반 ask_user                      |
 | 백엔드 | CompositeBackend, StateBackend, StoreBackend, FilesystemBackend | Auto-Dream 메모리 추출                          |
 | 스킬 | skills=["./skills/"], SKILL.md 포맷 | 커스텀 스킬 파일                                  |
@@ -107,7 +108,7 @@ totoro-code/
 │   ├── skills.py                  # 스킬 매니저 (CRUD + 원격 설치)
 │   ├── utils.py                   # 텍스트 새니타이즈 유틸리티
 │   │
-│   ├── core/                      # 핵심 — create_deep_agent() 래퍼
+│   ├── core/                      # 핵심 — create_agent() 직접 사용
 │   │   ├── __init__.py
 │   │   ├── agent.py               # create_totoro_agent() — 단일 진입점
 │   │   └── models.py              # LLM 프로바이더 초기화, 폴백 체인
@@ -155,105 +156,55 @@ totoro-code/
 
 ### 3.1 create_totoro_agent() (core/agent.py)
 
-`create_deep_agent()`를 래핑하여 TOTORO-CODE 전용 설정을 주입하는 단일 진입점.
+LangChain의 `create_agent()`를 직접 사용하여 미들웨어 스택을 명시적으로 제어하는 단일 진입점.
 
-```python
-# totoro/core/agent.py
-from deepagents import create_deep_agent, SubAgent
-from deepagents.backends import LocalShellBackend
-from langgraph.checkpoint.memory import MemorySaver
-from langgraph.checkpoint.sqlite import SqliteSaver
-from langgraph.store.memory import InMemoryStore
+#### create_deep_agent() → create_agent() 전환 사유
 
-from totoro.tools import git_tool, web_search_tool, fetch_url_tool, ask_user_tool
-from totoro.config.schema import AgentConfig
-from totoro.core.models import create_lightweight_model
-from totoro.layers.sanitize import SanitizeMiddleware
-from totoro.layers.stall_detector import StallDetectorMiddleware
-from totoro.layers.auto_dream import AutoDreamExtractor, AutoDreamMiddleware
+`create_deep_agent()`는 `SubAgentMiddleware`를 항상 자동 추가하며 끌 수 없다.
+이 미들웨어는 `task` 도구(1,643 토큰)와 `TASK_SYSTEM_PROMPT`(535 토큰)를 매 턴 주입하여
+**턴당 ~2,178 토큰의 고정 오버헤드**를 발생시킨다.
 
+TOTORO-CODE는 자체 `orchestrate_tool`(multiprocessing 기반 병렬 실행)로 서브에이전트를 관리하므로
+프레임워크의 `task` 도구는 사용되지 않는 **dead weight**였다.
 
-def create_totoro_agent(config: AgentConfig):
-    """TOTORO-CODE 에이전트 생성 — create_deep_agent() 래퍼
+`create_agent()`로 전환하여:
+- SubAgentMiddleware 제거 → **턴당 ~2,178 토큰 절감 (26%)**
+- 미들웨어 스택을 명시적으로 제어 가능
+- 서브에이전트도 동일하게 `create_agent()` 사용 → 역할별 도구 필터링 가능
 
-    DeepAgents 프레임워크가 자동 제공하는 것:
-    - StateGraph 구성 (agent → tools → agent 루프)
-    - 내장 도구: write_todos, ls, read_file, write_file, edit_file, glob, grep, task
-    - 미들웨어: TodoList, Filesystem, SubAgent, HITL, Skills, Memory
-    - 서브에이전트 관리 (선언적 config → task 도구)
-    - HITL (interrupt_on → Command(resume=...))
+#### 미들웨어 스택 (명시적 조립)
 
-    TOTORO-CODE가 추가하는 것:
-    - 커스텀 도구: git, web_search, fetch_url, ask_user, orchestrate
-    - 서브에이전트 타입 정의 (explorer, coder, researcher, reviewer, planner)
-    - LocalShellBackend 구성
-    - interrupt_on 설정 (파괴적 도구에 HITL 적용)
-    - 스킬 디렉토리 설정 (built-in/skills/, ~/.totoro/skills/, .totoro/skills/)
+```
+프레임워크 기본 스택:
+  1. TodoListMiddleware          — write_todos 도구
+  2. SkillsMiddleware            — 스킬 시스템 (선택)
+  3. FilesystemMiddleware        — ls, read/write/edit_file, glob, grep, execute
+  4. [SubAgentMiddleware]        — ✗ 제거됨 (task 도구 ~2,178 토큰 절감)
+  5. SummarizationMiddleware     — 대화 요약
+  6. PatchToolCallsMiddleware    — dangling tool call 수정
 
-    Returns:
-        tuple: (agent, checkpointer, store, auto_dream_extractor)
-    """
+커스텀 스택:
+  7. SanitizeMiddleware          — surrogate 문자 제거
+  8. ContextCompactionMiddleware — LLM 기반 컨텍스트 압축
+  9. StallDetectorMiddleware     — 정체 감지
+ 10. AutoDreamMiddleware         — 메모리 추출
 
-    # ─── 체크포인터 + 스토어 ───
-    checkpointer = _create_checkpointer()  # SqliteSaver at ~/.totoro/checkpoints.db
-    store = InMemoryStore()
+테일 스택:
+ 11. AnthropicPromptCachingMiddleware — 프롬프트 캐싱
+ 12. HumanInTheLoopMiddleware    — HITL 인터럽트
+```
 
-    # ─── 시스템 프롬프트 + 모델 ───
-    system_prompt = _build_system_prompt(config)
-    model = _resolve_model(config.model, config.provider)
+#### 서브에이전트 도구 필터링
 
-    # ─── 서브에이전트 등록 (오케스트레이터용) ───
-    _build_orchestrator_subagents(model, config)
+서브에이전트도 `create_agent()`를 사용하며, 역할별로 필요한 도구만 제공:
 
-    # ─── 커스텀 도구 조립 ───
-    # 프레임워크 내장 도구(write_todos, ls, read_file, write_file, edit_file,
-    # glob, grep, task)는 자동 포함되므로 여기에 추가하지 않는다.
-    from totoro.orchestrator import orchestrate_tool
-    custom_tools = [git_tool, fetch_url_tool, ask_user_tool, orchestrate_tool]
-    if os.environ.get("TAVILY_API_KEY"):
-        custom_tools.append(web_search_tool)
-
-    # ─── HITL 설정 ───
-    if config.permissions.mode == "auto_approve":
-        hitl_config = None
-    else:
-        hitl_config = {
-            "execute": True,
-            "write_file": True,
-            "edit_file": True,
-            # git is excluded — it has internal safety rules that selectively
-            # interrupt only dangerous subcommands (push --force, reset --hard, etc.)
-        }
-
-    # ─── 커스텀 미들웨어 스택 ───
-    custom_middleware, auto_dream = _build_custom_middleware(config, store)
-
-    # ─── 스킬 경로 탐색 ───
-    from totoro.skills import SkillManager
-    skill_mgr = SkillManager(config.project_root)
-    skill_paths = skill_mgr.get_skill_paths() or None
-
-    # ─── 에이전트 생성 ───
-    agent = create_deep_agent(
-        name="totoro",
-        model=model,
-        tools=custom_tools,
-        system_prompt=system_prompt,
-        skills=skill_paths,
-        # subagents are managed by orchestrate_tool (parallel),
-        # not framework's task tool (sequential)
-        backend=LocalShellBackend(
-            root_dir=config.project_root,
-            virtual_mode=False,
-            inherit_env=True,
-        ),
-        interrupt_on=hitl_config,
-        checkpointer=checkpointer,
-        store=store,
-        middleware=custom_middleware,
-    )
-
-    return agent, checkpointer, store, auto_dream
+| 에이전트 | 역할 | 허용 도구 | 절감 |
+|----------|------|-----------|------|
+| mei | 연구/탐색 | ls, read_file, glob, grep | ~848 tokens |
+| tatsuo | 리뷰/테스트 | ls, read_file, glob, grep, execute | ~156 tokens |
+| satsuki | 코딩 | 전체 | - |
+| susuwatari | 마이크로 | 전체 | - |
+| catbus | 플래닝 | 도구 없음 (lightweight LLM 단일 호출) | - |
 
 
 def _create_checkpointer():
@@ -1321,6 +1272,26 @@ class ContextCompactor:
         return _heuristic_summarize(messages)
 ```
 
+### 8.5 토큰 사용량 표시 (status.py)
+
+턴별 토큰 사용량을 ↑/↓ 화살표로 input/output 분리 표시:
+
+```
+── Done (Tools: 2 · ↑ 6.0k ↓ 200 tokens) ──     캐시 없을 때
+── Done (Tools: 2 · ↑ 2.0k ↓ 200 tokens) ──     캐시 있을 때
+```
+
+| 기호 | 의미 |
+|------|------|
+| ↑ | 새로운 입력 토큰 (전체 입력 - 캐시 히트) |
+| ↓ | 출력 토큰 (모델이 생성한 응답) |
+
+**프롬프트 캐싱 지원**: Anthropic의 `cache_read_input_tokens` 또는 OpenAI의
+`prompt_tokens_details.cached_tokens`를 자동 감지하여, 캐시된 토큰을 제외한
+실효 입력 토큰만 ↑에 표시한다. 캐싱 미지원 프로바이더에서는 전체 입력을 표시.
+
+토큰은 메인 에이전트 + 서브에이전트 합산으로 집계되며, 세션 레벨 누적도 별도 관리.
+
 ---
 
 ## 9. MCP 도구 권한 (tools/mcp/permissions.py)
@@ -1714,7 +1685,7 @@ requires-python = ">=3.11"
 
 [project.dependencies]
 # 핵심 프레임워크
-deepagents = ">=0.4"             # create_deep_agent(), 미들웨어, 내장 도구
+deepagents = ">=0.4"             # FilesystemMiddleware, 미들웨어, 내장 도구
 langgraph = ">=1.0"
 langchain = ">=1.0"
 langchain-core = ">=1.0"
@@ -1748,7 +1719,7 @@ totoro = "totoro.cli:main"
 ### Phase 1: 기초 골격 (MVP)
 - [ ] 프로젝트 구조 생성 (pyproject.toml, 패키지 구조)
 - [ ] AgentConfig 설정 스키마 (config/schema.py)
-- [ ] `create_totoro_agent()` 구현 (core/agent.py) — `create_deep_agent()` 래핑
+- [x] `create_totoro_agent()` 구현 (core/agent.py) — `create_agent()` 직접 사용 (SubAgentMiddleware 제거)
 - [ ] 커스텀 도구 5종: git, bash, web_search, fetch_url, ask_user
 - [ ] Git 안전 규칙 엔진 (서브커맨드별 분류, force-push 차단, 민감 파일 감지)
 - [ ] CLI 진입점 (cli.py) — 비대화형 모드 먼저
