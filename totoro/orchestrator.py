@@ -248,6 +248,69 @@ def _parse_plan_json(text: str) -> list[dict] | None:
     return None
 
 
+def _run_catbus_inline(catbus_tasks: list[dict]) -> dict[str, SubagentResult | str]:
+    """Run catbus planner inline without split pane TUI.
+
+    Catbus is a single LLM call with no tools — no need for multiprocessing
+    or curses split pane. Runs directly in the main process for speed.
+
+    Args:
+        catbus_tasks: List of catbus planner task dicts.
+
+    Returns:
+        Dict mapping catbus labels to their SubagentResult.
+    """
+    import sys as _sys
+    from totoro.core.agent import _resolve_model
+    from langchain_core.messages import SystemMessage, HumanMessage
+
+    config_map = {cfg["name"]: cfg for cfg in _subagent_configs}
+    results: dict[str, SubagentResult | str] = {}
+
+    for i, task in enumerate(catbus_tasks):
+        description = task.get("task", task.get("description", ""))
+        label = f"catbus-{i}"
+
+        cfg = config_map.get("catbus")
+        if cfg is None:
+            results[label] = SubagentResult(final_text="Catbus config not found")
+            continue
+
+        if _tracker:
+            _tracker.on_subagent_start(label, description)
+            _tracker.phase = "Planning"
+            _tracker._mark_dirty()
+
+        print(f"  {_DIM}[catbus] planning...{_RESET}", file=_sys.stderr, flush=True)
+
+        try:
+            model = _resolve_model(_model_config["model_name"], _model_config["provider"])
+            system_prompt = cfg.get("system_prompt", "")
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=f"Working directory: {_project_root}\n\n{description}"),
+            ]
+            response = model.invoke(messages)
+            text = response.content if isinstance(response.content, str) else str(response.content)
+        except Exception as e:
+            text = f"Planning error: {e}"
+
+        results[label] = SubagentResult(final_text=text)
+
+        if _tracker:
+            _tracker.on_subagent_end(label)
+            _tracker.phase = "Executing"
+            _tracker._mark_dirty()
+
+    return results
+
+
+# Import for inline stderr formatting
+import sys as _sys_module
+_DIM = "\033[38;2;96;80;58m"
+_RESET = "\033[0m"
+
+
 def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
     """Run catbus planner, parse plan, then auto-dispatch execution agents.
 
@@ -259,8 +322,8 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
     Returns:
         Combined formatted string of plan summary and execution results.
     """
-    # Phase 1: Run catbus (suppress summary — will show combined at end)
-    plan_results = _run_parallel(catbus_tasks, suppress_summary=True)
+    # Phase 1: Run catbus inline (no split pane — single LLM call, no tools)
+    plan_results = _run_catbus_inline(catbus_tasks)
 
     # Collect plan text and parse execution tasks
     execution_tasks = []
