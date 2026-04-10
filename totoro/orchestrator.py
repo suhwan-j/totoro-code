@@ -376,16 +376,26 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
         execution_tasks, original_request, plan_context,
     )
 
+    # Build plan display (used both before and after execution)
+    task_list = []
+    for i, t in enumerate(execution_tasks):
+        desc = t.get("task", t.get("description", ""))
+        # Strip injected context headers — show only the actual task
+        if "## Your Task\n" in desc:
+            desc = desc.split("## Your Task\n")[-1]
+        task_list.append(f"  {i+1}. [{t.get('type')}] {desc[:80]}")
+    plan_display = f"── Plan ({len(execution_tasks)} tasks) ──\n" + "\n".join(task_list)
+
+    # Print plan before curses TUI starts (visible in scrollback)
+    from totoro.diff import safe_print
+    safe_print(f"\n{plan_display}\n")
+
     # Phase 2: Run execution agents
     exec_results = _run_parallel(execution_tasks)
 
-    # Combine results
+    # Combine results (returned to main agent as tool result)
     MAX_RESULT_CHARS = 1500
-    parts = []
-
-    # Plan summary — show dispatched tasks only, not catbus raw output
-    task_list = [f"  {i+1}. [{t.get('type')}] {t.get('task', t.get('description', ''))[:80]}" for i, t in enumerate(execution_tasks)]
-    parts.append(f"── Plan ({len(execution_tasks)} tasks) ──\n" + "\n".join(task_list))
+    parts = [plan_display]
 
     # Execution results
     parts.append("── Execution ──")
