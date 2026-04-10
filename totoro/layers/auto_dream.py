@@ -445,10 +445,17 @@ class AutoDreamExtractor:
         self._store.clear()
         self._cached_memories = None
 
-    def format_memory_context(self) -> str:
+    def format_memory_context(self, max_per_type: int | None = None) -> str:
         """Format memories for injection into system prompt.
 
-        Returns empty string if no memories, otherwise a formatted block.
+        Includes ALL memories by default. If total count exceeds a reasonable
+        limit for context injection, distributes slots proportionally across
+        types so that no single type dominates and important early memories
+        (like user role) aren't dropped.
+
+        Args:
+            max_per_type: Override max entries per type. None = use configured
+                          max_memory_entries divided by number of types.
         """
         if self._cached_memories is None:
             self._cached_memories = self._store.get_all()
@@ -456,17 +463,36 @@ class AutoDreamExtractor:
         if not self._cached_memories:
             return ""
 
-        lines = [MEMORY_CONTEXT_HEADER]
         # Group by type
         by_type: dict[str, list[dict]] = {}
         for m in self._cached_memories:
             by_type.setdefault(m["type"], []).append(m)
 
+        # Calculate per-type budget if we need to trim
+        # Max total entries for injection (keep system prompt reasonable)
+        max_inject_total = 60  # ~60 entries ≈ 3000 tokens, reasonable for system prompt
+        if max_per_type is None:
+            num_types = max(len(by_type), 1)
+            total_entries = sum(len(v) for v in by_type.values())
+            if total_entries > max_inject_total:
+                # Distribute proportionally: each type gets at least 3 slots
+                base_per_type = max(3, max_inject_total // num_types)
+                max_per_type = base_per_type
+            # else: no limit needed, include everything
+
+        lines = [MEMORY_CONTEXT_HEADER]
         type_labels = _SECTION_TITLES
         for mtype, entries in by_type.items():
             label = type_labels.get(mtype, mtype.title())
             lines.append(f"### {label}")
-            for m in entries[-10:]:  # Last 10 per type
+            if max_per_type is not None and len(entries) > max_per_type:
+                # Keep first few (important identity/role entries) + latest
+                keep_first = max(2, max_per_type // 3)
+                keep_last = max_per_type - keep_first
+                selected = entries[:keep_first] + entries[-keep_last:]
+            else:
+                selected = entries
+            for m in selected:
                 lines.append(f"- **{m['name']}**: {m['content']}")
             lines.append("")
 
