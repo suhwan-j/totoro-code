@@ -279,9 +279,14 @@ def _run_interactive(agent, invoke_config: dict, session_manager=None,
                     print(f"{_RED}  Reload failed: {e}{_RESET}")
                 continue
 
-            if result:
-                print(result)
-            continue
+            # Handle __agent_message__ — inject as user message to agent (e.g. /init)
+            if result and result.startswith("__agent_message__:"):
+                user_input = result[len("__agent_message__:"):]
+                # Fall through to normal message processing below
+            else:
+                if result:
+                    print(result)
+                continue
 
         # Plan-only mode: inject planning constraint + disable auto-dispatch
         from totoro.orchestrator import set_plan_only

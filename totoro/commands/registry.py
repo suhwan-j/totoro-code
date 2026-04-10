@@ -40,6 +40,7 @@ def set_skill_manager(manager):
 # Command metadata for autocomplete and menu
 COMMAND_LIST = [
     ("/help",     "Show help message"),
+    ("/init",     "Scan project & generate TOTORO.md context"),
     ("/model",    "Show or switch model"),
     ("/mode",     "Cycle mode (default → auto-approve → plan-only)"),
     ("/new",      "Start a new session (e.g. /new fix login bug)"),
@@ -68,6 +69,7 @@ def handle_slash_command(user_input: str, agent, invoke_config: dict) -> str | N
 
     handlers = {
         "/help": _cmd_help,
+        "/init": _cmd_init,
         "/exit": _cmd_exit,
         "/quit": _cmd_exit,
         "/new": _cmd_new,
@@ -94,6 +96,7 @@ def _cmd_help(args, agent, config) -> str:
     mode_help = format_mode_help()
     return f"""{_B}Available commands:{_R}
   /help              Show this help message
+  /init              Scan project & generate TOTORO.md context
   /exit              Exit the CLI
   /mode              Cycle mode (default → auto-approve → plan-only)
   /new [description] Start a new session (e.g. /new fix login bug)
@@ -113,6 +116,36 @@ def _cmd_help(args, agent, config) -> str:
   /status            Show agent status (turns, tokens, memories)
 
 {mode_help}"""
+
+
+def _cmd_init(args, agent, config) -> str:
+    """Load init skill and send to agent for project scanning."""
+    from pathlib import Path
+
+    # Load init SKILL.md
+    skill_paths = [
+        Path.cwd() / ".totoro" / "skills" / "init" / "SKILL.md",
+        Path.home() / ".totoro" / "skills" / "init" / "SKILL.md",
+        Path(__file__).resolve().parent.parent.parent / "built-in" / "skills" / "init" / "SKILL.md",
+    ]
+    skill_content = None
+    for p in skill_paths:
+        if p.exists():
+            text = p.read_text(encoding="utf-8")
+            # Strip frontmatter
+            if text.startswith("---"):
+                end = text.find("---", 3)
+                if end > 0:
+                    skill_content = text[end + 3:].strip()
+                    break
+            skill_content = text.strip()
+            break
+
+    if not skill_content:
+        return f"{_CP}Init skill not found.{_R}"
+
+    # Return sentinel — CLI will inject this as a user message to the agent
+    return f"__agent_message__:[/init] {skill_content}"
 
 
 def _cmd_exit(args, agent, config) -> str:
