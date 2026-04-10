@@ -564,9 +564,15 @@ def _run_lightweight_llm(
             meta = getattr(response, "response_metadata", {})
             usage = meta.get("token_usage", meta.get("usage", {}))
         if usage:
+            cached = usage.get("cache_read_input_tokens", 0)
+            if not cached:
+                details = usage.get("prompt_tokens_details", {})
+                if isinstance(details, dict):
+                    cached = details.get("cached_tokens", 0)
             emit("tokens",
                  input=usage.get("input_tokens", usage.get("prompt_tokens", 0)),
-                 output=usage.get("output_tokens", usage.get("completion_tokens", 0)))
+                 output=usage.get("output_tokens", usage.get("completion_tokens", 0)),
+                 cached=cached)
     except Exception as e:
         text = f"Planning error: {e}"
 
@@ -700,9 +706,15 @@ def _run_subagent_in_process(
                             meta = getattr(msg, "response_metadata", {})
                             usage = meta.get("token_usage", meta.get("usage", {}))
                         if usage:
+                            cached = usage.get("cache_read_input_tokens", 0)
+                            if not cached:
+                                details = usage.get("prompt_tokens_details", {})
+                                if isinstance(details, dict):
+                                    cached = details.get("cached_tokens", 0)
                             emit("tokens",
                                  input=usage.get("input_tokens", usage.get("prompt_tokens", 0)),
-                                 output=usage.get("output_tokens", usage.get("completion_tokens", 0)))
+                                 output=usage.get("output_tokens", usage.get("completion_tokens", 0)),
+                                 cached=cached)
 
                         tool_calls = getattr(msg, "tool_calls", [])
                         for tc in tool_calls:

@@ -96,8 +96,9 @@ class StatusTracker:
         self.current_tool: str | None = None
         self.current_tool_args: str = ""
         self.tool_count: int = 0
-        self.token_input: int = 0   # Total input tokens (main agent)
-        self.token_output: int = 0  # Total output tokens (main agent)
+        self.token_input: int = 0    # Total input tokens (main agent)
+        self.token_output: int = 0   # Total output tokens (main agent)
+        self.token_cached: int = 0   # Cached input tokens (prompt caching)
         self.phase: str = "Initializing"
         self._last_panel_lines: int = 0
         self._panel_enabled: bool = True
@@ -288,11 +289,16 @@ class StatusTracker:
         if agent_count > 0:
             counters.append(f"Agents: {agent_count}")
         total_tok = self.token_input + self.token_output
+        total_cached = self.token_cached
         if self._pane_manager:
             for p in self._pane_manager.get_panes():
                 total_tok += p.token_input + p.token_output
+                total_cached += getattr(p, "token_cached", 0)
         if total_tok > 0:
-            counters.append(_format_tokens(total_tok))
+            tok_str = _format_tokens(total_tok)
+            if total_cached > 0:
+                tok_str += f" [{_format_tokens(total_cached)} cached]"
+            counters.append(tok_str)
         counter_str = f" {_DIM}{' · '.join(counters)}{_RESET}"
 
         spinner = _SPINNER[self._spinner_idx]
@@ -426,9 +432,11 @@ class StatusTracker:
 
         # Collect total tokens: main agent + subagents
         total_tokens = self.token_input + self.token_output
+        total_cached = self.token_cached
         if self._pane_manager:
             for pane in self._pane_manager.get_panes():
                 total_tokens += pane.token_input + pane.token_output
+                total_cached += getattr(pane, "token_cached", 0)
 
         parts = [f"Tools: {self.tool_count}"]
         if total > 0:
@@ -436,12 +444,17 @@ class StatusTracker:
         if agent_total > 0:
             parts.append(f"Subagents: {agent_total}")
         if total_tokens > 0:
-            parts.append(_format_tokens(total_tokens))
+            tok_str = _format_tokens(total_tokens)
+            if total_cached > 0:
+                tok_str += f" [{_format_tokens(total_cached)} cached]"
+            parts.append(tok_str)
 
         # Accumulate into session-level counter
+        panes = self._pane_manager.get_panes() if self._pane_manager else []
         accumulate_session_tokens(
-            self.token_input + sum(p.token_input for p in (self._pane_manager.get_panes() if self._pane_manager else [])),
-            self.token_output + sum(p.token_output for p in (self._pane_manager.get_panes() if self._pane_manager else [])),
+            self.token_input + sum(p.token_input for p in panes),
+            self.token_output + sum(p.token_output for p in panes),
+            total_cached,
         )
 
         summary = " · ".join(parts)
@@ -451,21 +464,23 @@ class StatusTracker:
 
 # ─── Session-level token accumulator ───
 # Persists across turns (StatusTracker is recreated each turn)
-_session_tokens = {"input": 0, "output": 0}
+_session_tokens = {"input": 0, "output": 0, "cached": 0}
 
 
 def get_session_tokens() -> dict:
     return _session_tokens.copy()
 
 
-def accumulate_session_tokens(input_tokens: int, output_tokens: int):
+def accumulate_session_tokens(input_tokens: int, output_tokens: int, cached_tokens: int = 0):
     _session_tokens["input"] += input_tokens
     _session_tokens["output"] += output_tokens
+    _session_tokens["cached"] += cached_tokens
 
 
 def reset_session_tokens():
     _session_tokens["input"] = 0
     _session_tokens["output"] = 0
+    _session_tokens["cached"] = 0
 
 
 def _format_tokens(total: int) -> str:

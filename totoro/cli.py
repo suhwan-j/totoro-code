@@ -621,6 +621,13 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
                             if usage:
                                 tracker.token_input += usage.get("input_tokens", usage.get("prompt_tokens", 0))
                                 tracker.token_output += usage.get("output_tokens", usage.get("completion_tokens", 0))
+                                # Extract cached tokens from prompt_tokens_details or cache_read
+                                cached = usage.get("cache_read_input_tokens", 0)
+                                if not cached:
+                                    details = usage.get("prompt_tokens_details", {})
+                                    if isinstance(details, dict):
+                                        cached = details.get("cached_tokens", 0)
+                                tracker.token_cached += cached
 
                             tool_calls = getattr(msg, "tool_calls", [])
                             for tc in tool_calls:

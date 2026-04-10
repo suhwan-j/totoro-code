@@ -54,6 +54,7 @@ class PaneState:
     tool_history: list = field(default_factory=list)  # list[ToolCall]
     token_input: int = 0
     token_output: int = 0
+    token_cached: int = 0
 
     @property
     def elapsed(self) -> str:
@@ -124,6 +125,7 @@ class PaneManager:
             elif event.event_type == "tokens":
                 pane.token_input += event.data.get("input", 0)
                 pane.token_output += event.data.get("output", 0)
+                pane.token_cached += event.data.get("cached", 0)
 
             elif event.event_type == "diff":
                 text = event.data.get("text", "")
