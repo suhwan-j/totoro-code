@@ -110,6 +110,40 @@ def _run_and_format(tasks: list[dict]) -> str:
     return "\n\n".join(parts) or "(no results)"
 
 
+def _inject_context_into_tasks(
+    tasks: list[dict],
+    original_request: str,
+    plan_context: str,
+) -> list[dict]:
+    """Prepend original user request and plan context to each task description.
+
+    Sub-agents run in separate processes with no conversation history.
+    Without this context injection, they only see their individual task
+    and can't understand the broader goal or how their work fits in.
+    """
+    if not original_request and not plan_context:
+        return tasks
+
+    context_header = ""
+    if original_request:
+        context_header += f"## Original User Request\n{original_request}\n\n"
+    if plan_context:
+        # Keep plan context brief to avoid overwhelming the sub-agent
+        trimmed_plan = plan_context[:1000]
+        if len(plan_context) > 1000:
+            trimmed_plan += "\n...(plan truncated)"
+        context_header += f"## Plan Context\n{trimmed_plan}\n\n"
+    context_header += "## Your Task\n"
+
+    enriched = []
+    for task in tasks:
+        task_copy = dict(task)
+        desc = task_copy.get("task", task_copy.get("description", ""))
+        task_copy["task"] = context_header + desc
+        enriched.append(task_copy)
+    return enriched
+
+
 def _parse_plan_json(text: str) -> list[dict] | None:
     """Extract JSON task array from catbus plan output.
 
@@ -220,6 +254,15 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
                 "Call orchestrate_tool with specific tasks."
             )
             return "\n\n".join(plan_summary_parts) + "\n\n" + hint
+
+    # ── Inject context into execution tasks ──
+    # Sub-agents have NO conversation history — make their tasks self-contained
+    # by prepending the original user request and plan summary.
+    original_request = catbus_tasks[0].get("task", catbus_tasks[0].get("description", ""))
+    plan_context = "\n".join(plan_summary_parts)
+    execution_tasks = _inject_context_into_tasks(
+        execution_tasks, original_request, plan_context,
+    )
 
     # Phase 2: Run execution agents
     exec_results = _run_parallel(execution_tasks)
