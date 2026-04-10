@@ -1,10 +1,21 @@
-"""Totoro agent factory — wraps create_deep_agent()"""
+"""Totoro agent factory — uses create_agent() directly for lean middleware control.
+
+Bypasses create_deep_agent() to avoid the automatic SubAgentMiddleware (task tool)
+which adds ~2,178 tokens of overhead. Totoro uses its own orchestrate_tool for
+sub-agent management, so the framework's task tool is dead weight.
+"""
 import os
 from pathlib import Path
 from datetime import datetime
 
-from deepagents import create_deep_agent, SubAgent
+from langchain.agents import create_agent
+from langchain.agents.middleware import HumanInTheLoopMiddleware, TodoListMiddleware
 from deepagents.backends import LocalShellBackend
+from deepagents.graph import BASE_AGENT_PROMPT
+from deepagents.middleware.filesystem import FilesystemMiddleware
+from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
+from deepagents.middleware.skills import SkillsMiddleware
+from deepagents.middleware.summarization import create_summarization_middleware
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.store.memory import InMemoryStore
@@ -15,6 +26,9 @@ from totoro.core.models import create_lightweight_model
 from totoro.layers.sanitize import SanitizeMiddleware
 from totoro.layers.stall_detector import StallDetectorMiddleware
 from totoro.layers.auto_dream import AutoDreamExtractor, AutoDreamMiddleware, CharacterFile
+
+# Re-export SubAgent type for SUBAGENT_CONFIGS (used by orchestrator)
+from deepagents.middleware.subagents import SubAgent
 
 
 CORE_SYSTEM_PROMPT = """You are Totoro, a CLI coding agent orchestrator. You delegate ALL work to sub-agents via orchestrate_tool.
@@ -198,7 +212,12 @@ def _create_checkpointer():
 
 
 def create_totoro_agent(config: AgentConfig):
-    """Create the Totoro agent wrapping create_deep_agent().
+    """Create the Totoro agent using create_agent() directly.
+
+    Uses create_agent() instead of create_deep_agent() to control the
+    middleware stack precisely — notably excluding SubAgentMiddleware
+    (task tool) which adds ~2,178 tokens of overhead per turn.
+    Totoro manages sub-agents via its own orchestrate_tool.
 
     Returns:
         tuple: (agent, checkpointer, store, auto_dream_extractor)
@@ -231,33 +250,140 @@ def create_totoro_agent(config: AgentConfig):
             "edit_file": True,
         }
 
-    # Build custom middleware stack
-    custom_middleware, auto_dream = _build_custom_middleware(config, store)
+    # Build backend
+    backend = LocalShellBackend(
+        root_dir=config.project_root,
+        virtual_mode=False,
+        inherit_env=True,
+    )
+
+    # Build complete middleware stack
+    all_middleware = _build_full_middleware_stack(config, model, backend, store, hitl_config)
 
     # Discover skill paths
     from totoro.skills import SkillManager
     skill_mgr = SkillManager(config.project_root)
     skill_paths = skill_mgr.get_skill_paths() or None
 
-    agent = create_deep_agent(
-        name="totoro",
+    # Extract auto_dream extractor for CLI access
+    auto_dream = None
+    for mw in all_middleware:
+        if isinstance(mw, AutoDreamMiddleware):
+            auto_dream = mw._extractor
+            break
+
+    agent = create_agent(
         model=model,
         tools=custom_tools,
         system_prompt=system_prompt,
-        skills=skill_paths,
-        # subagents are managed by orchestrate_tool (parallel), not framework's task tool (sequential)
-        backend=LocalShellBackend(
-            root_dir=config.project_root,
-            virtual_mode=False,
-            inherit_env=True,
-        ),
-        interrupt_on=hitl_config,
+        middleware=all_middleware,
         checkpointer=checkpointer,
         store=store,
-        middleware=custom_middleware,
-    )
+        name="totoro",
+    ).with_config({
+        "recursion_limit": 9_999,
+    })
 
     return agent, checkpointer, store, auto_dream
+
+
+def _build_full_middleware_stack(config, model, backend, store, hitl_config):
+    """Build the complete middleware stack, replacing create_deep_agent()'s auto-stack.
+
+    Middleware ordering (matches create_deep_agent minus SubAgentMiddleware):
+
+    Framework base stack:
+      1. TodoListMiddleware         — write_todos tool
+      2. SkillsMiddleware           — skill discovery (if skills provided)
+      3. FilesystemMiddleware       — ls, read/write/edit_file, glob, grep, execute
+      4. [SubAgentMiddleware]       — EXCLUDED: task tool (~2,178 tokens saved)
+      5. SummarizationMiddleware    — conversation summarization
+      6. PatchToolCallsMiddleware   — fix dangling tool calls
+
+    Totoro custom stack:
+      7. SanitizeMiddleware         — strip surrogate chars
+      8. ContextCompactionMiddleware — LLM-based context compaction
+      9. StallDetectorMiddleware    — detect agent stalls
+     10. AutoDreamMiddleware        — memory extraction
+
+    Tail stack:
+     11. AnthropicPromptCachingMiddleware — prefix caching
+     12. HumanInTheLoopMiddleware   — HITL interrupts (if configured)
+    """
+    middleware_list = []
+
+    # ── Framework base stack ──
+
+    # 1. TodoList — write_todos tool for task management
+    middleware_list.append(TodoListMiddleware())
+
+    # 2. Skills — skill discovery (if configured)
+    from totoro.skills import SkillManager
+    skill_mgr = SkillManager(config.project_root)
+    skill_paths = skill_mgr.get_skill_paths()
+    if skill_paths:
+        middleware_list.append(SkillsMiddleware(backend=backend, sources=skill_paths))
+
+    # 3. Filesystem — file I/O + shell execution tools
+    middleware_list.append(FilesystemMiddleware(backend=backend))
+
+    # 4. SubAgentMiddleware — INTENTIONALLY EXCLUDED
+    #    Saves ~2,178 tokens/turn. Totoro uses orchestrate_tool instead.
+
+    # 5. Summarization — conversation compaction
+    middleware_list.append(create_summarization_middleware(model, backend))
+
+    # 6. PatchToolCalls — fix dangling tool calls in history
+    middleware_list.append(PatchToolCallsMiddleware())
+
+    # ── Totoro custom stack ──
+
+    # 7. Sanitize — strip surrogate chars before API serialization
+    middleware_list.append(SanitizeMiddleware())
+
+    # 8. Context Compaction — LLM-based auto-compact
+    from totoro.layers.context_compaction import ContextCompactionMiddleware
+    from totoro.layers._token_utils import get_model_context_window
+    compact_model = create_lightweight_model(config.fallback_model)
+    context_window = config.context.model_context_window or get_model_context_window(config.model)
+    middleware_list.append(ContextCompactionMiddleware(
+        auto_threshold=config.context.auto_compact_threshold,
+        reactive_threshold=config.context.reactive_compact_threshold,
+        emergency_threshold=config.context.emergency_compact_threshold,
+        model_context_window=context_window,
+        model=compact_model,
+    ))
+
+    # 9. Stall Detection
+    if config.loop.stall_detection:
+        middleware_list.append(StallDetectorMiddleware(max_empty_turns=3))
+
+    # 10. Auto-Dream Memory
+    if config.memory.auto_extract:
+        lightweight_model = create_lightweight_model(config.fallback_model)
+        character_file = CharacterFile()
+        auto_dream = AutoDreamExtractor(
+            model=lightweight_model,
+            config=config,
+            store=character_file,
+        )
+        middleware_list.append(AutoDreamMiddleware(auto_dream))
+
+    # ── Tail stack ──
+
+    # 11. Anthropic Prompt Caching — cache system prompt + tools prefix
+    #     "ignore" silently skips for non-Anthropic models
+    try:
+        from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
+        middleware_list.append(AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"))
+    except ImportError:
+        pass
+
+    # 12. HITL — interrupt on destructive tools
+    if hitl_config:
+        middleware_list.append(HumanInTheLoopMiddleware(interrupt_on=hitl_config))
+
+    return middleware_list
 
 
 def _build_orchestrator_subagents(model, config: AgentConfig):
@@ -284,52 +410,6 @@ def _build_orchestrator_subagents(model, config: AgentConfig):
         provider=_resolved_provider if _resolved_provider != "auto" else config.provider,
         project_root=str(Path(config.project_root).resolve()),
     )
-
-
-def _build_custom_middleware(config: AgentConfig, store):
-    """Build custom middleware stack for Totoro.
-
-    Returns:
-        tuple: (middleware_list, auto_dream_extractor)
-    """
-    middleware_list = []
-
-    # 0. Sanitize — MUST be first: strips surrogate chars before API serialization
-    middleware_list.append(SanitizeMiddleware())
-
-    # 1. Context Compaction — before_model: auto-compact when context usage is high
-    #    Uses the lightweight model for intelligent summarization
-    from totoro.layers.context_compaction import ContextCompactionMiddleware
-    from totoro.layers._token_utils import get_model_context_window
-    compact_model = create_lightweight_model(config.fallback_model)
-    context_window = config.context.model_context_window or get_model_context_window(config.model)
-    middleware_list.append(ContextCompactionMiddleware(
-        auto_threshold=config.context.auto_compact_threshold,
-        reactive_threshold=config.context.reactive_compact_threshold,
-        emergency_threshold=config.context.emergency_compact_threshold,
-        model_context_window=context_window,
-        model=compact_model,
-    ))
-
-    # 2. Stall Detection — after_model hook
-    if config.loop.stall_detection:
-        middleware_list.append(StallDetectorMiddleware(
-            max_empty_turns=3,
-        ))
-
-    # 2. Auto-Dream Memory — before_model (inject) + after_model (extract async)
-    auto_dream = None
-    if config.memory.auto_extract:
-        lightweight_model = create_lightweight_model(config.fallback_model)
-        character_file = CharacterFile()  # ~/.totoro/character.md
-        auto_dream = AutoDreamExtractor(
-            model=lightweight_model,
-            config=config,
-            store=character_file,
-        )
-        middleware_list.append(AutoDreamMiddleware(auto_dream))
-
-    return middleware_list, auto_dream
 
 
 def _resolve_model(model_name: str, provider: str = "auto"):
@@ -430,6 +510,9 @@ def _build_system_prompt(config: AgentConfig) -> str:
     Order: static content first (cacheable prefix), dynamic content last.
     This maximizes prefix KV cache hits on vLLM (--enable-prefix-caching)
     and Anthropic (cache_control ephemeral).
+
+    Note: BASE_AGENT_PROMPT from DeepAgents is appended for core agent behavior
+    guidelines (conciseness, task execution patterns, progress updates).
     """
     # ── Static prefix (cacheable) ──
     sections = [CORE_SYSTEM_PROMPT]
@@ -438,6 +521,9 @@ def _build_system_prompt(config: AgentConfig) -> str:
     character_md = _load_character_md()
     if character_md:
         sections.append(character_md)
+
+    # ── DeepAgents base prompt (core behavior guidelines) ──
+    sections.append(BASE_AGENT_PROMPT)
 
     # ── Dynamic suffix (changes per session/model switch) ──
     sections.append(f"""
@@ -462,5 +548,3 @@ def _load_character_md() -> str | None:
         except Exception:
             pass
     return None
-
-
