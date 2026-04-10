@@ -673,6 +673,12 @@ TASK_AGENT_RULES = """
 - Be concise — report what you did in one sentence when done.
 - Do NOT verify, review, or double-check your own work unless that IS your task.
 - STOP as soon as your assigned task is complete. Do not do extra work.
+
+## Shell Commands
+- The `execute` tool runs commands from the project root directory.
+- Each execute call is a separate subprocess — `cd` does NOT persist between calls.
+- To run commands in a different directory, chain with `cd`: `cd ~/todo-app && npm test`
+- ALWAYS use `cd <target> && <command>` when working outside the project root.
 """
 
 
