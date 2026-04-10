@@ -69,7 +69,8 @@ After receiving exploration results, synthesize everything into TOTORO.md with t
 
 ### Phase 3: Save
 
-Use `write_file` to save the synthesized content to `TOTORO.md` in the project root.
+After synthesizing the results yourself (do NOT delegate writing to a subagent),
+use `write_file` to save the content to `TOTORO.md` in the current working directory.
 
 ## Rules
 
