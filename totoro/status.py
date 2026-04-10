@@ -295,10 +295,7 @@ class StatusTracker:
                 total_tok += p.token_input + p.token_output
                 total_cached += getattr(p, "token_cached", 0)
         if total_tok > 0:
-            tok_str = _format_tokens(total_tok)
-            if total_cached > 0:
-                tok_str += f" [{_format_tokens(total_cached)} cached]"
-            counters.append(tok_str)
+            counters.append(_format_tokens_with_cache(total_tok, total_cached))
         counter_str = f" {_DIM}{' · '.join(counters)}{_RESET}"
 
         spinner = _SPINNER[self._spinner_idx]
@@ -370,11 +367,8 @@ class StatusTracker:
                 stats_parts = [f"{elapsed_str}", f"{tool_count} tools"]
                 if token_in or token_out:
                     tok_total = token_in + token_out
-                    tok_str = _format_tokens(tok_total)
-                    token_cached = getattr(pane, "token_cached", 0) if pane else 0
-                    if token_cached > 0:
-                        tok_str += f" [{_format_tokens(token_cached)} cached]"
-                    stats_parts.append(tok_str)
+                    tok_cached = getattr(pane, "token_cached", 0) if pane else 0
+                    stats_parts.append(_format_tokens_with_cache(tok_total, tok_cached))
                 lines.append(f"     {_DIM}{' · '.join(stats_parts)}{_RESET}")
 
                 # Tool history (last 5) + current tool
@@ -449,10 +443,7 @@ class StatusTracker:
         if agent_total > 0:
             parts.append(f"Subagents: {agent_total}")
         if total_tokens > 0:
-            tok_str = _format_tokens(total_tokens)
-            if total_cached > 0:
-                tok_str += f" [{_format_tokens(total_cached)} cached]"
-            parts.append(tok_str)
+            parts.append(_format_tokens_with_cache(total_tokens, total_cached))
 
         # Accumulate into session-level counter
         panes = self._pane_manager.get_panes() if self._pane_manager else []
@@ -495,6 +486,23 @@ def _format_tokens(total: int) -> str:
     if total < 10000:
         return f"{total / 1000:.1f}k tokens"
     return f"{total // 1000}k tokens"
+
+
+def _format_tokens_with_cache(total: int, cached: int) -> str:
+    """Format token display showing effective (uncached) tokens.
+
+    When caching is active, shows only the new/uncached tokens with ↑ prefix,
+    similar to Claude Code's display. This represents the actual cost-bearing
+    portion of the request.
+
+    Examples:
+      No cache:   "8.3k tokens"
+      With cache: "↑ 2.0k tokens"  (8.3k total - 6.3k cached + output)
+    """
+    if cached > 0:
+        effective = max(0, total - cached)
+        return f"↑ {_format_tokens(effective)}"
+    return _format_tokens(total)
 
 
 def _format_tool_summary(name: str, args: dict) -> str:
