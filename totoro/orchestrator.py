@@ -596,12 +596,20 @@ def _run_subagent_in_process(
 ) -> SubagentResult:
     """Rebuild graph and stream subagent in child process.
 
-    Each subagent is a full Totoro task agent (create_deep_agent) with skills,
-    but without the orchestration layer (no planning, no sub-delegation).
+    Uses create_agent() directly with a minimal middleware stack:
+    - FilesystemMiddleware (file I/O + shell)
+    - SanitizeMiddleware (strip surrogates)
+    - StallDetectorMiddleware (detect loops)
+    - PatchToolCallsMiddleware (fix dangling tool calls)
+
+    Excludes TodoList, SubAgent, Skills, Summarization middleware
+    that create_deep_agent() would auto-add (~3,000+ tokens saved per subagent).
     """
     from totoro.core.agent import _resolve_model
-    from deepagents import create_deep_agent
+    from langchain.agents import create_agent
     from deepagents.backends import LocalShellBackend
+    from deepagents.middleware.filesystem import FilesystemMiddleware
+    from deepagents.middleware.patch_tool_calls import PatchToolCallsMiddleware
     from totoro.layers.sanitize import SanitizeMiddleware
     from totoro.layers.stall_detector import StallDetectorMiddleware
     from langgraph.checkpoint.memory import MemorySaver
@@ -612,24 +620,28 @@ def _run_subagent_in_process(
     character_prompt = subagent_cfg.get("system_prompt", "") + TASK_AGENT_RULES
     character_name = subagent_cfg.get("name", "totoro-task")
 
-    subagent = create_deep_agent(
-        name=character_name,
+    backend = LocalShellBackend(
+        root_dir=project_root,
+        virtual_mode=False,
+        inherit_env=True,
+    )
+
+    # Minimal middleware — subagents do one focused task, no planning/delegation
+    middleware = [
+        FilesystemMiddleware(backend=backend),
+        PatchToolCallsMiddleware(),
+        SanitizeMiddleware(),
+        StallDetectorMiddleware(max_empty_turns=2),
+    ]
+
+    subagent = create_agent(
         model=model,
         system_prompt=character_prompt,
-        tools=[],  # backend provides file I/O + shell; no extra tools needed
-        backend=LocalShellBackend(
-            root_dir=project_root,
-            virtual_mode=False,
-            inherit_env=True,
-        ),
-        # Auto-approve everything — main agent already approved the orchestration
-        interrupt_on=None,
+        tools=[],
+        middleware=middleware,
         checkpointer=MemorySaver(),
-        middleware=[
-            SanitizeMiddleware(),
-            StallDetectorMiddleware(max_empty_turns=2),
-        ],
-    )
+        name=character_name,
+    ).with_config({"recursion_limit": 9_999})
 
     # Stream the subagent
     thread_id = f"sub-{label}-{os.getpid()}-{int(time.time() * 1000)}"
