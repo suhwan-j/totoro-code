@@ -5,6 +5,8 @@ renders left (dashboard) + right (subagent detail), exits when done.
 """
 
 import curses
+import os
+import queue
 import re
 import time
 import threading
@@ -26,7 +28,7 @@ _PAIR_MAGENTA = 7    # Ivory       #C4A876 → secondary
 _PAIR_BOLD_WHITE = 8 # Ivory light #EDE0C4 → body text
 _PAIR_DIVIDER = 9    # Ivory dark  #4A3C28
 
-_ANSI_RE = re.compile(r'\033\[[0-9;]*m')
+_ANSI_RE = re.compile(r'(?:\033|\x1b)\[[0-9;]*[A-Za-z]|\^\[\[[0-9;]*[A-Za-z]')
 
 
 def _strip_ansi(text: str) -> str:
@@ -89,12 +91,75 @@ def _truncate_to_width(text: str, max_width: int) -> str:
     return text
 
 
+def _wrap_text(text: str, max_width: int, max_lines: int = 3) -> list[str]:
+    """Wrap text into multiple lines respecting CJK display width.
+
+    Args:
+        text: Text to wrap.
+        max_width: Maximum display width per line.
+        max_lines: Maximum number of wrapped lines.
+
+    Returns:
+        List of wrapped line strings.
+    """
+    if max_width <= 0:
+        return [text[:20]]
+    lines = []
+    remaining = text
+    while remaining and len(lines) < max_lines:
+        if _wcswidth(remaining) <= max_width:
+            lines.append(remaining)
+            break
+        # Find the split point
+        w = 0
+        split = 0
+        for i, ch in enumerate(remaining):
+            cw = _wcwidth(ch)
+            if w + cw > max_width:
+                split = i
+                break
+            w += cw
+        else:
+            split = len(remaining)
+        if split == 0:
+            split = 1
+        lines.append(remaining[:split])
+        remaining = remaining[split:]
+    if remaining and len(lines) == max_lines:
+        # Indicate truncation on last line
+        last = lines[-1]
+        if _wcswidth(last) > max_width - 1:
+            last = _truncate_to_width(last, max_width - 1)
+        lines[-1] = last + "…"
+    return lines if lines else [text[:1]]
+
+
+def _short_path(path: str) -> str:
+    """Extract short display path from full file path."""
+    if not path:
+        return "?"
+    import os
+    return os.path.basename(path)
+
+
+def _extract_filename_from_summary(summary: str) -> str:
+    """Extract filename from tool summary like 'write_file(foo.py)'."""
+    import re
+    m = re.search(r'\(([^)]+)\)', summary)
+    return m.group(1) if m else ""
+
+
 class SplitPaneTUI:
     """Split-pane TUI using curses. Left=dashboard, Right=subagent detail."""
 
-    def __init__(self, tracker: 'StatusTracker', pane_manager: 'PaneManager'):
+    def __init__(self, tracker: 'StatusTracker', pane_manager: 'PaneManager',
+                 hitl_pending: 'queue.Queue | None' = None,
+                 response_queues: 'dict | None' = None):
         self.tracker = tracker
         self.pane_manager = pane_manager
+        self.hitl_pending = hitl_pending
+        self.response_queues = response_queues or {}
+        self._global_auto_approve = False
         self._stdscr = None
         self._left_win = None
         self._right_win = None
@@ -191,6 +256,23 @@ class SplitPaneTUI:
                     time.sleep(0.5)
                     break
 
+                # Check for pending HITL requests — batch all pending into one curses exit
+                if self.hitl_pending is not None and not self._global_auto_approve:
+                    try:
+                        hitl_event = self.hitl_pending.get_nowait()
+                        self._handle_hitl_batch(stdscr, hitl_event)
+                        continue
+                    except queue.Empty:
+                        pass
+                # Auto-approve mode: drain silently
+                if self.hitl_pending is not None and self._global_auto_approve:
+                    while True:
+                        try:
+                            ev = self.hitl_pending.get_nowait()
+                            self._approve_event(ev)
+                        except queue.Empty:
+                            break
+
                 # Check for key press (Ctrl+C handling)
                 key = stdscr.getch()
                 if key == 3:  # Ctrl+C
@@ -206,6 +288,144 @@ class SplitPaneTUI:
 
     def stop(self):
         self._running = False
+
+    def _send_hitl_response_event(self, label: str):
+        """Update pane status back to running after HITL response."""
+        from totoro.pane import SubagentEvent
+        if self.pane_manager:
+            self.pane_manager.update_subagent(SubagentEvent(
+                label=label, event_type="hitl_response", data={},
+            ))
+
+    def _exit_curses(self, stdscr):
+        """Cleanly exit curses for terminal input."""
+        curses.endwin()
+        os.system('stty sane 2>/dev/null')
+        import sys
+        sys.stdout.write("\033[?25h")  # Show cursor
+        sys.stdout.flush()
+
+    def _enter_curses(self, stdscr):
+        """Re-enter curses after terminal input."""
+        stdscr.refresh()
+        curses.curs_set(0)
+        stdscr.nodelay(True)
+        stdscr.timeout(300)
+        stdscr.clear()
+        h, w = stdscr.getmaxyx()
+        self._div_col = int(w * 0.5)
+        try:
+            self._left_win = curses.newwin(h, max(1, self._div_col), 0, 0)
+            self._right_win = curses.newwin(h, max(1, w - self._div_col - 1), 0, self._div_col + 1)
+        except curses.error:
+            pass
+
+    def _approve_event(self, event):
+        """Send approve decision for a single HITL event."""
+        rq = self.response_queues.get(event.label)
+        if rq:
+            try:
+                rq.put({"decisions": [{"type": "approve"}]}, timeout=1)
+            except Exception:
+                pass
+        self._send_hitl_response_event(event.label)
+
+    def _drain_and_approve_pending(self):
+        """Approve all pending HITL requests in the queue."""
+        while True:
+            try:
+                ev = self.hitl_pending.get_nowait()
+                self._approve_event(ev)
+            except queue.Empty:
+                break
+
+    def _handle_hitl_batch(self, stdscr, first_event):
+        """Exit curses once, process all pending HITL events, re-enter curses once.
+
+        Avoids repeated curses exit/enter cycles that corrupt terminal state.
+        """
+        self._exit_curses(stdscr)
+
+        # Process first event + any that arrive while we're prompting
+        pending = [first_event]
+        while pending:
+            event = pending.pop(0)
+            label = event.label
+            tool_requests = event.data.get("tool_requests", [])
+            decisions = []
+
+            for tr in tool_requests:
+                tool_name = tr.get("name", "?")
+                tool_args = tr.get("args", {})
+
+                print(f"\n  \033[33m[APPROVAL REQUIRED]\033[0m \033[1m{tool_name}\033[0m")
+                if isinstance(tool_args, dict):
+                    for k, v in tool_args.items():
+                        v_str = str(v)
+                        if len(v_str) > 300:
+                            v_str = v_str[:300] + "..."
+                        print(f"    {k}: {v_str}")
+                print(f"  \033[1m(a)\033[0mpprove / \033[1m(A)\033[0mpprove all / \033[1m(r)\033[0meject / \033[1m(e)\033[0mdit ?")
+
+                try:
+                    choice = input("  > ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    decisions.append({"type": "reject", "message": "Aborted by user"})
+                    break
+
+                if choice in ("A", "approve all", "aa"):
+                    decisions.append({"type": "approve_all"})
+                    self._global_auto_approve = True
+                    # Also set module-level flag so new TUI instances inherit it
+                    import totoro.orchestrator as _orch
+                    _orch._runtime_auto_approve = True
+                    print(f"  \033[33m\u26a1 Auto-approve enabled for all subagents\033[0m")
+                    break
+                elif choice.lower() in ("r", "reject", "n", "no"):
+                    decisions.append({"type": "reject", "message": f"User rejected {tool_name}"})
+                elif choice.lower() in ("e", "edit"):
+                    try:
+                        edit_instruction = input("  How to change? > ").strip()
+                    except (EOFError, KeyboardInterrupt):
+                        decisions.append({"type": "approve"})
+                        continue
+                    if not edit_instruction or not isinstance(tool_args, dict):
+                        decisions.append({"type": "approve"})
+                    else:
+                        edited_args = dict(tool_args)
+                        if "=" in edit_instruction and " " not in edit_instruction.split("=")[0]:
+                            key, val = edit_instruction.split("=", 1)
+                            edited_args[key.strip()] = val.strip()
+                        decisions.append({
+                            "type": "edit",
+                            "edited_action": {"name": tool_name, "args": edited_args},
+                        })
+                else:
+                    decisions.append({"type": "approve"})
+
+            # Send response to child
+            rq = self.response_queues.get(label)
+            if rq:
+                try:
+                    rq.put({"decisions": decisions}, timeout=1)
+                except Exception:
+                    pass
+            self._send_hitl_response_event(label)
+
+            # If approve-all, drain and approve everything remaining
+            if self._global_auto_approve:
+                self._drain_and_approve_pending()
+                break
+
+            # Check for more events that arrived while we were prompting
+            # Brief wait to batch events arriving close together
+            try:
+                next_ev = self.hitl_pending.get(timeout=0.3)
+                pending.append(next_ev)
+            except queue.Empty:
+                pass
+
+        self._enter_curses(stdscr)
 
     def _render_divider(self, height: int):
         """Draw vertical divider as subtle dotted line.
@@ -320,6 +540,12 @@ class SplitPaneTUI:
                     self._waddstr(win, row, 3 + len(connector) + 2, name, _PAIR_GREEN, bold=True)
                     if pid_str:
                         self._waddstr(win, row, 3 + len(connector) + 2 + len(name) + 1, pid_str, _PAIR_DIM)
+                elif pane and pane.status == "waiting_approval":
+                    self._waddstr(win, row, 3, connector, _PAIR_DIM)
+                    self._waddstr(win, row, 3 + len(connector), "⏸ ", _PAIR_YELLOW)
+                    self._waddstr(win, row, 3 + len(connector) + 2, name, _PAIR_YELLOW, bold=True)
+                    if pid_str:
+                        self._waddstr(win, row, 3 + len(connector) + 2 + len(name) + 1, pid_str, _PAIR_DIM)
                 else:
                     self._waddstr(win, row, 3, connector, _PAIR_DIM)
                     self._waddstr(win, row, 3 + len(connector), "◈ ", _PAIR_MAGENTA)
@@ -339,7 +565,22 @@ class SplitPaneTUI:
                 self._waddstr(win, row, 3 + len(connector) + 2 + len(name_with_pid), stats_text, _PAIR_DIM)
                 row += 1
 
-                # Current tool or recent line
+                # Task goal/description (max 2 lines)
+                if pane and pane.description and row < height - 1:
+                    indent = 3 + len(child_pre)
+                    prefix = "▸ "
+                    # Leave 2-char margin to avoid touching divider
+                    max_w = w - indent - _wcswidth(prefix) - 2
+                    desc_lines = _wrap_text(pane.description, max_w, max_lines=2)
+                    for li, dline in enumerate(desc_lines):
+                        if row >= height - 1:
+                            break
+                        self._waddstr(win, row, 3, child_pre, _PAIR_DIM)
+                        pfx = prefix if li == 0 else "  "
+                        self._waddstr(win, row, indent, f"{pfx}{dline}", _PAIR_MAGENTA)
+                        row += 1
+
+                # Current tool
                 if pane and pane.current_tool and row < height - 1:
                     self._waddstr(win, row, 3, child_pre, _PAIR_DIM)
                     self._waddstr(win, row, 3 + len(child_pre), f"⚡ {pane.current_tool}", _PAIR_BLUE)
@@ -367,7 +608,7 @@ class SplitPaneTUI:
 
         # Only show running panes — completed ones disappear from right panel
         # (left panel tree still shows them with ✓)
-        running_panes = [p for p in panes if p.status == "running"]
+        running_panes = [p for p in panes if p.status in ("running", "waiting_approval")]
         n_running = len(running_panes)
 
         if n_running == 0:
@@ -423,25 +664,121 @@ class SplitPaneTUI:
                     self._waddstr(win, row, 2, _truncate_to_width(f"⚡ {pane.current_tool}", w - 3), _PAIR_YELLOW)
                     row += 1
 
-                # Tool history (Claude Code style: ⎿ ToolName(args))
+                # Tool history — Claude Code style with content preview
                 if pane.tool_history and row < end_row - 1:
-                    max_visible = min(6, end_row - row - 2)
+                    # Show the most recent tool calls that fit
                     history = pane.tool_history
-                    hidden = max(0, len(history) - max_visible)
-                    visible = history[-max_visible:]
-                    for ti, tc in enumerate(visible):
+                    # Render from the end, showing as many as space allows
+                    # First pass: figure out how many we can show
+                    avail = end_row - row - 1
+                    visible = []
+                    budget = avail
+                    for tc in reversed(history):
+                        # Each tool call needs at least 1 line (header)
+                        # Plus optional content lines
+                        needed = 1  # ● ToolName(args)
+                        if tc.name in ("write_file", "edit_file") and tc.content_lines:
+                            needed += 1  # ⎿ Wrote N lines
+                            needed += min(len(tc.content_lines), 6)
+                            if tc.line_count > len(tc.content_lines):
+                                needed += 1  # … +N more lines
+                        elif tc.name == "execute" and tc.result_preview:
+                            needed += min(tc.result_preview.count('\n') + 1, 3)
+                        elif tc.result_preview and tc.name not in ("write_file", "edit_file"):
+                            needed += 1  # ⎿ result
+                        if budget < needed:
+                            break
+                        budget -= needed
+                        visible.append(tc)
+                    visible.reverse()
+
+                    hidden = len(history) - len(visible)
+                    if hidden > 0 and row < end_row - 1:
+                        self._waddstr(win, row, 2, f"  +{hidden} earlier tool calls", _PAIR_DIM)
+                        row += 1
+
+                    for tc in visible:
                         if row >= end_row - 1:
                             break
-                        prefix = "⎿ " if ti == 0 else "  "
-                        display = _truncate_to_width(f"{prefix}{tc.summary}", w - 4)
-                        pair = _PAIR_RED if tc.is_error else _PAIR_DIM
-                        self._waddstr(win, row, 2, display, pair)
-                        row += 1
-                    if hidden > 0 and row < end_row - 1:
-                        self._waddstr(win, row, 2, f"  +{hidden} more tool uses", _PAIR_DIM)
-                        row += 1
-                else:
-                    # Fallback to recent output lines
+
+                        # Resolve display filename: prefer file_path, fallback to summary
+                        _fname = _short_path(tc.file_path) if tc.file_path else _extract_filename_from_summary(tc.summary) or "?"
+
+                        # ● ToolHeader — Claude Code style
+                        if tc.name == "write_file":
+                            header = f"● Write({_fname})"
+                            self._waddstr(win, row, 1, _truncate_to_width(header, w - 2), _PAIR_CYAN, bold=True)
+                            row += 1
+                            if row < end_row - 1:
+                                sub = f"  ⎿  Wrote {tc.line_count} lines to {_fname}"
+                                self._waddstr(win, row, 2, _truncate_to_width(sub, w - 3), _PAIR_DIM)
+                                row += 1
+                            # Content preview with line numbers
+                            for li, line in enumerate(tc.content_lines[:6]):
+                                if row >= end_row - 1:
+                                    break
+                                num = f"{li + 1:>4} "
+                                self._waddstr(win, row, 3, num, _PAIR_DIM)
+                                self._waddstr(win, row, 3 + len(num),
+                                              _truncate_to_width(line, w - 4 - len(num)),
+                                              _PAIR_BOLD_WHITE)
+                                row += 1
+                            if tc.line_count > len(tc.content_lines) and row < end_row - 1:
+                                extra = tc.line_count - len(tc.content_lines)
+                                self._waddstr(win, row, 3, f"     … +{extra} more lines", _PAIR_DIM)
+                                row += 1
+
+                        elif tc.name == "edit_file":
+                            header = f"● Edit({_fname})"
+                            self._waddstr(win, row, 1, _truncate_to_width(header, w - 2), _PAIR_CYAN, bold=True)
+                            row += 1
+                            if tc.content_lines and row < end_row - 1:
+                                sub = f"  ⎿  Changed {tc.line_count} lines"
+                                self._waddstr(win, row, 2, _truncate_to_width(sub, w - 3), _PAIR_DIM)
+                                row += 1
+                                for line in tc.content_lines[:4]:
+                                    if row >= end_row - 1:
+                                        break
+                                    display = f"     +{line}"
+                                    self._waddstr(win, row, 3,
+                                                  _truncate_to_width(display, w - 4),
+                                                  _PAIR_GREEN)
+                                    row += 1
+
+                        elif tc.name == "execute":
+                            cmd = tc.summary[2:] if tc.summary.startswith("$ ") else tc.summary
+                            header = f"● Bash({_strip_ansi(cmd)})"
+                            self._waddstr(win, row, 1, _truncate_to_width(header, w - 2), _PAIR_CYAN, bold=True)
+                            row += 1
+                            if tc.result_preview and row < end_row - 1:
+                                clean_result = _strip_ansi(tc.result_preview)
+                                for rline in clean_result.split('\n')[:3]:
+                                    if row >= end_row - 1:
+                                        break
+                                    self._waddstr(win, row, 3,
+                                                  _truncate_to_width(f"  ⎿  {rline.strip()}", w - 4),
+                                                  _PAIR_DIM)
+                                    row += 1
+
+                        elif tc.name == "read_file":
+                            header = f"● Read({_fname})"
+                            self._waddstr(win, row, 1, _truncate_to_width(header, w - 2), _PAIR_CYAN, bold=True)
+                            row += 1
+
+                        else:
+                            # Generic tool
+                            pair = _PAIR_RED if tc.is_error else _PAIR_CYAN
+                            header = f"● {_strip_ansi(tc.summary)}"
+                            self._waddstr(win, row, 1, _truncate_to_width(header, w - 2), pair, bold=True)
+                            row += 1
+                            if tc.result_preview and row < end_row - 1:
+                                self._waddstr(win, row, 3,
+                                              _truncate_to_width(f"  ⎿  {_strip_ansi(tc.result_preview)[:80]}", w - 4),
+                                              _PAIR_DIM)
+                                row += 1
+
+                # AI text lines (when no tool history yet or between tools)
+                elif pane.recent_lines and row < end_row - 1:
                     content_rows = end_row - row - 1
                     visible_lines = pane.recent_lines[-max(1, content_rows):]
                     for line in visible_lines:
@@ -450,14 +787,10 @@ class SplitPaneTUI:
                         clean = _truncate_to_width(_strip_ansi(line), w - 3)
                         if clean.startswith("●") or clean.startswith("▸"):
                             self._waddstr(win, row, 2, clean, _PAIR_CYAN)
-                        elif clean.startswith("  ⎿"):
-                            self._waddstr(win, row, 2, clean, _PAIR_DIM)
-                        elif clean.startswith("+"):
-                            self._waddstr(win, row, 2, clean, _PAIR_GREEN)
                         elif clean.startswith("✗") or "error" in clean.lower()[:30]:
                             self._waddstr(win, row, 2, clean, _PAIR_RED)
                         else:
-                            self._waddstr(win, row, 2, clean, _PAIR_DIM)
+                            self._waddstr(win, row, 2, clean, _PAIR_BOLD_WHITE)
                         row += 1
 
                 # Separator between running panes (not after last)

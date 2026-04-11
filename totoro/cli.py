@@ -192,6 +192,10 @@ def main():
 
     config = load_config(cli_overrides=cli_overrides)
 
+    # Propagate permission allow patterns to orchestrator
+    from totoro.orchestrator import set_allow_patterns
+    set_allow_patterns(config.permissions.allow)
+
     from totoro.core.agent import create_totoro_agent
     agent, checkpointer, store, auto_dream = create_totoro_agent(config)
 
@@ -448,12 +452,13 @@ def _stream_with_hitl(agent, user_input: str, config: dict, auto_approve: bool =
         True if the agent produced a response, False if errors occurred.
     """
     _ensure_imports()
-    from totoro.orchestrator import set_tracker, set_pane_manager, RenderThread
+    from totoro.orchestrator import set_tracker, set_pane_manager, set_auto_approve, RenderThread
     from totoro.pane import PaneManager
     from totoro.hotkey import HotkeyListener
 
     tracker = StatusTracker()
     set_tracker(tracker)
+    set_auto_approve(auto_approve)
 
     # PaneManager for detailed subagent tracking
     pane_manager = PaneManager()
@@ -487,6 +492,7 @@ def _stream_with_hitl(agent, user_input: str, config: dict, auto_approve: bool =
             # Check if mode changed during streaming
             if handler and handler.is_auto_approve:
                 auto_approve = True
+                set_auto_approve(True)
 
             if interrupt_info is None:
                 break
@@ -604,8 +610,48 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
             print_fn(rendered, end="", flush=True)
             trk._mark_dirty()
 
+    import queue as _queue
+    _stream_q: _queue.Queue = _queue.Queue(maxsize=200)
+    _stream_err: list = []
+    _stream_start = time.time()
+    _FIRST_EVENT_TIMEOUT = 180   # 3 min to get first response from API
+    _IDLE_TIMEOUT = 300          # 5 min without any event = stuck
+
+    def _main_stream_worker():
+        try:
+            for ev in agent.stream(input_payload, config=config, stream_mode=["messages", "updates"]):
+                _stream_q.put(ev)
+            _stream_q.put(None)
+        except Exception as exc:
+            _stream_err.append(exc)
+            _stream_q.put(None)
+
+    import threading as _threading
+    _stream_t = _threading.Thread(target=_main_stream_worker, daemon=True)
+    _stream_t.start()
+
+    _got_first = False
+
     try:
-        for event in agent.stream(input_payload, config=config, stream_mode=["messages", "updates"]):
+        while True:
+            wait = 5.0 if _got_first else min(5.0, max(0.1, _FIRST_EVENT_TIMEOUT - (time.time() - _stream_start)))
+            try:
+                event = _stream_q.get(timeout=wait)
+            except _queue.Empty:
+                elapsed = time.time() - _stream_start
+                if not _got_first and elapsed > _FIRST_EVENT_TIMEOUT:
+                    _safe_print(f"\n{_RED}[Timeout] API not responding after {int(elapsed)}s{_RESET}", flush=True)
+                    had_error = True
+                    break
+                continue
+
+            if event is None:
+                if _stream_err:
+                    raise _stream_err[0]
+                break
+
+            _got_first = True
+            _stream_start = time.time()  # Reset idle timer on each event
             event_count += 1
 
             # Multi-mode events are 2-tuples: (mode, data)
@@ -766,6 +812,13 @@ def _do_stream(agent, input_payload, config: dict, tracker: StatusTracker, verbo
                                     }
                             if tool_calls:
                                 got_ai_response = True
+
+    except KeyboardInterrupt:
+        with tracker._lock:
+            tracker._clear_previous()
+            tracker._last_panel_lines = 0
+        _safe_print(f"\n{_YELLOW}[Interrupted] Stopped by user{_RESET}", flush=True)
+        had_error = True
 
     except Exception as e:
         with tracker._lock:

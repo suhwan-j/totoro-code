@@ -35,6 +35,9 @@ class ToolCall:
     summary: str
     is_error: bool = False
     result_preview: str = ""
+    file_path: str = ""
+    content_lines: list = field(default_factory=list)  # preview lines for write/edit
+    line_count: int = 0  # total lines written/edited
 
 
 @dataclass
@@ -56,6 +59,7 @@ class PaneState:
     token_output: int = 0
     token_cached: int = 0
     summary_text: str = ""  # First meaningful line from subagent final_text
+    _pending_tool_queue: list = field(default_factory=list)  # queue of (name, args) from tool_start events
 
     @property
     def elapsed(self) -> str:
@@ -126,6 +130,11 @@ class PaneManager:
             elif event.event_type == "tool_start":
                 summary = event.data.get("summary", event.data.get("name", "?"))
                 pane.current_tool = summary
+                pane._pending_tool_queue.append({
+                    "name": event.data.get("name", ""),
+                    "args": event.data.get("args", {}),
+                    "summary": summary,
+                })
                 pane.append(f"▸ {summary}")
 
             elif event.event_type == "tool_end":
@@ -133,10 +142,32 @@ class PaneManager:
                 name = event.data.get("name", "")
                 result_text = event.data.get("result", "")
                 is_error = event.data.get("is_error", False)
-                summary = pane.current_tool or name
+
+                # Match with pending tool_start by name (FIFO within same name)
+                pending = {}
+                summary = name
+                for i, p in enumerate(pane._pending_tool_queue):
+                    if p["name"] == name:
+                        pending = p.get("args", {})
+                        summary = p.get("summary", name)
+                        pane._pending_tool_queue.pop(i)
+                        break
+                if not pending and pane._pending_tool_queue:
+                    # Fallback: pop first entry if no name match
+                    p = pane._pending_tool_queue.pop(0)
+                    pending = p.get("args", {})
+                    summary = p.get("summary", name)
+
+                file_path = pending.get("file_path", "")
+                content_lines = pending.get("content_preview", [])
+                line_count = pending.get("line_count", 0)
+
                 pane.tool_history.append(ToolCall(
                     name=name, summary=summary,
-                    is_error=is_error, result_preview=result_text[:80],
+                    is_error=is_error, result_preview=result_text[:200],
+                    file_path=file_path,
+                    content_lines=content_lines,
+                    line_count=line_count,
                 ))
                 # Show result preview for verbose insight
                 if is_error and result_text:
@@ -156,8 +187,20 @@ class PaneManager:
                 for line in text.splitlines()[:6]:
                     pane.append(line)
 
+            elif event.event_type == "hitl_request":
+                tools = event.data.get("tool_requests", [])
+                names = ", ".join(t.get("name", "?") for t in tools)
+                pane.status = "waiting_approval"
+                pane.current_tool = f"⏸ {names} (waiting for approval)"
+                pane.append(f"⏸ Waiting: {names}")
+
+            elif event.event_type == "hitl_response":
+                if pane.status == "waiting_approval":
+                    pane.status = "running"
+                    pane.current_tool = ""
+
             elif event.event_type == "done":
-                if pane.status == "running":
+                if pane.status in ("running", "waiting_approval"):
                     pane.status = "done"
                     pane.end_time = time.time()
 
@@ -222,6 +265,6 @@ class PaneManager:
 
     @property
     def is_active(self) -> bool:
-        """True if any subagent is still running."""
+        """True if any subagent is still running or waiting for approval."""
         with self._lock:
-            return any(p.status == "running" for p in self.panes.values())
+            return any(p.status in ("running", "waiting_approval") for p in self.panes.values())

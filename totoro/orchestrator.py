@@ -30,6 +30,9 @@ _project_root: str = "."
 _tracker = None
 _pane_manager: PaneManager | None = None
 _plan_only: bool = False             # When True, catbus plans but does NOT auto-dispatch
+_auto_approve: bool = False          # When True, subagents skip HITL approval
+_allow_patterns: list[str] = []     # Permission allow patterns from settings.json
+_runtime_auto_approve: bool = False  # Set True when user chooses "Approve All" during session
 
 
 def register_subagent_configs(configs: list[dict], model_name: str, provider: str, project_root: str):
@@ -75,6 +78,30 @@ def set_plan_only(enabled: bool):
     """
     global _plan_only
     _plan_only = enabled
+
+
+def set_auto_approve(enabled: bool):
+    """Set auto-approve mode for subagent HITL.
+
+    Args:
+        enabled: When True, subagents skip tool approval prompts.
+    """
+    global _auto_approve
+    _auto_approve = enabled
+
+
+def set_allow_patterns(patterns: list[str]):
+    """Set permission allow patterns for subagent HITL.
+
+    Patterns are matched against tool names and command strings.
+    "*" means approve everything. "mkdir" matches execute commands
+    starting with "mkdir". "write_file" matches all file writes.
+
+    Args:
+        patterns: List of glob-style permission patterns.
+    """
+    global _allow_patterns
+    _allow_patterns = patterns
 
 
 # ─── Orchestrate tool ───
@@ -336,8 +363,70 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
     from totoro.diff import safe_print
     safe_print(f"\n{plan_display_colored}\n")
 
-    # Phase 2: Run execution agents
-    exec_results = _run_parallel(execution_tasks)
+    # Phase 2: Split tatsuo (verification) from workers — tatsuo runs AFTER workers complete
+    worker_tasks = [t for t in execution_tasks if t.get("type") != "tatsuo"]
+    verify_tasks = [t for t in execution_tasks if t.get("type") == "tatsuo"]
+
+    # Run workers first
+    exec_results = _run_parallel(worker_tasks) if worker_tasks else {}
+
+    # Phase 3: Verify → Fix → Re-verify loop (max 3 rounds)
+    MAX_RETRY = 3
+    all_verify_results = {}
+
+    for attempt in range(MAX_RETRY):
+        if not verify_tasks:
+            break
+
+        if _pane_manager:
+            _pane_manager.clear()
+
+        verify_results = _run_parallel(verify_tasks)
+        all_verify_results.update(verify_results)
+
+        # Check if tatsuo found failures
+        failures = []
+        for name, result in verify_results.items():
+            text = result.final_text if isinstance(result, SubagentResult) else str(result)
+            text_lower = text.lower()
+            if any(kw in text_lower for kw in ("fail", "error", "broken", "not working", "does not",
+                                                 "cannot", "missing", "crash", "exception", "bug")):
+                failures.append((name, text))
+
+        if not failures:
+            break  # All verification passed
+
+        if attempt >= MAX_RETRY - 1:
+            # Last attempt — don't retry, just report
+            from totoro.diff import safe_print
+            safe_print(f"\n  \033[31m[verify] {len(failures)} issue(s) remain after {MAX_RETRY} retries\033[0m")
+            break
+
+        # Build fix tasks from failure descriptions
+        from totoro.diff import safe_print
+        safe_print(f"\n  \033[33m[verify] {len(failures)} issue(s) found — auto-fix attempt {attempt + 1}/{MAX_RETRY}\033[0m")
+
+        fix_tasks = []
+        failure_context = "\n".join(f"- {text[:300]}" for _, text in failures)
+        for _, failure_text in failures:
+            fix_tasks.append({
+                "type": "satsuki",
+                "task": (
+                    f"Fix the following verification failures:\n{failure_context}\n\n"
+                    f"The original request was: {original_request[:200]}"
+                ),
+            })
+        # Deduplicate — one satsuki fix task is enough
+        fix_tasks = fix_tasks[:1]
+        fix_tasks = _inject_context_into_tasks(fix_tasks, original_request, failure_context)
+
+        if _pane_manager:
+            _pane_manager.clear()
+        fix_results = _run_parallel(fix_tasks)
+        exec_results.update(fix_results)
+        # Loop back to re-verify
+
+    exec_results.update(all_verify_results)
 
     # Combine results (returned to main agent as tool result — no ANSI colors)
     MAX_RESULT_CHARS = 1500
@@ -360,6 +449,12 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
             if len(result_text) > MAX_RESULT_CHARS:
                 result_text = result_text[:MAX_RESULT_CHARS] + "\n...(truncated)"
             parts.append(f"[{name}]\n{result_text}")
+
+    parts.append(
+        "── IMPORTANT ──\n"
+        "All tasks above are complete. You MUST now respond to the user with a summary of what was done. "
+        "Include: files created/modified, key decisions made, and how to run/use the result."
+    )
 
     return "\n\n".join(parts)
 
@@ -390,11 +485,14 @@ def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str
         and _sys.stdout.isatty()
     )
 
+    # HITL support: threading queue for parent-side HITL requests
+    hitl_pending: queue.Queue = queue.Queue()
+
     # Start event collector thread
     collector_halt = threading.Event()
     collector = threading.Thread(
         target=_event_collector,
-        args=(event_queue, collector_halt),
+        args=(event_queue, collector_halt, hitl_pending),
         daemon=True,
     )
     collector.start()
@@ -402,11 +500,18 @@ def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str
     # Register subagents and start processes
     processes: dict[str, mp.Process] = {}
     result_holders: dict[str, mp.Queue] = {}
+    response_holders: dict[str, mp.Queue] = {}  # parent→child for HITL responses
 
     for i, task in enumerate(tasks):
         agent_type = task.get("type", "satsuki")  # default to satsuki (senior agent)
         description = task.get("task", task.get("description", ""))
         label = f"{agent_type}-{i}"
+
+        # Extract display-friendly description (strip injected context headers)
+        display_desc = description
+        if "## Your Task\n" in display_desc:
+            display_desc = display_desc.split("## Your Task\n")[-1]
+        display_desc = display_desc.strip()[:120]
 
         # Route to character-specific config
         cfg = config_map.get(agent_type)
@@ -418,17 +523,20 @@ def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str
             cfg = {"name": "susuwatari", "system_prompt": "You are Susuwatari, a micro agent. Execute the task directly.", "description": ""}
 
         if _tracker:
-            _tracker.on_subagent_start(label, description)
+            _tracker.on_subagent_start(label, display_desc)
             _tracker.set_plan_item_active(i + 1)
         if _pane_manager:
-            _pane_manager.add_subagent(label, description)
+            _pane_manager.add_subagent(label, display_desc)
 
         result_q: mp.Queue = mp.Queue(maxsize=1)
+        response_q: mp.Queue = mp.Queue(maxsize=10)
         result_holders[label] = result_q
+        response_holders[label] = response_q
 
         p = mp.Process(
             target=_worker_process,
-            args=(cfg, description, label, _model_config, _project_root, event_queue, result_q),
+            args=(cfg, description, label, _model_config, _project_root,
+                  event_queue, result_q, response_q, _auto_approve or _runtime_auto_approve),
             daemon=True,
         )
         p.start()
@@ -455,7 +563,13 @@ def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str
             _tracker._clear_previous()
             _tracker._last_panel_lines = 0
 
-        tui = SplitPaneTUI(tracker=_tracker, pane_manager=_pane_manager)
+        tui = SplitPaneTUI(
+            tracker=_tracker, pane_manager=_pane_manager,
+            hitl_pending=hitl_pending, response_queues=response_holders,
+        )
+        # Inherit runtime auto-approve from previous TUI session (e.g. retry loop)
+        if _runtime_auto_approve or _auto_approve:
+            tui._global_auto_approve = True
         try:
             _curses.wrapper(tui.run)
         except Exception as e:
@@ -464,6 +578,26 @@ def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str
             if "nocbreak" not in err_msg and "endwin" not in err_msg:
                 print(f"  [warn] TUI error: {e}", file=_sys.stderr, flush=True)
         # Panel stays disabled — render_final_summary in cli.py will handle cleanup
+    else:
+        # Non-curses: poll for HITL requests and process completion
+        while _pane_manager and _pane_manager.is_active:
+            if _runtime_auto_approve or _auto_approve:
+                # Auto-approve: drain all pending silently
+                try:
+                    ev = hitl_pending.get(timeout=0.5)
+                    rq = response_holders.get(ev.label)
+                    if rq:
+                        rq.put({"decisions": [{"type": "approve"}]}, timeout=1)
+                    _pane_manager.update_subagent(SubagentEvent(
+                        label=ev.label, event_type="hitl_response", data={}))
+                except queue.Empty:
+                    pass
+            else:
+                try:
+                    hitl_event = hitl_pending.get(timeout=0.5)
+                    _handle_hitl_no_curses(hitl_event, response_holders)
+                except queue.Empty:
+                    pass
 
     # Stop monitor
     monitor_halt.set()
@@ -610,6 +744,8 @@ def _worker_process(
     project_root: str,
     event_queue: mp.Queue,
     result_queue: mp.Queue,
+    response_queue: "mp.Queue | None" = None,
+    auto_approve: bool = False,
 ):
     """Run in a child process. Routes to lightweight LLM call or full agent.
 
@@ -621,6 +757,8 @@ def _worker_process(
         project_root: Absolute path to the project root directory.
         event_queue: Multiprocessing queue for streaming events to parent.
         result_queue: Multiprocessing queue to return the final SubagentResult.
+        response_queue: Multiprocessing queue for HITL responses from parent.
+        auto_approve: Whether to skip HITL approval prompts.
     """
     try:
         agent_name = subagent_cfg.get("name", "")
@@ -633,6 +771,8 @@ def _worker_process(
             result = _run_subagent_in_process(
                 subagent_cfg, description, label,
                 model_config, project_root, event_queue,
+                response_queue=response_queue,
+                auto_approve=auto_approve,
             )
         result_queue.put(result)
     except Exception as e:
@@ -753,6 +893,8 @@ def _run_subagent_in_process(
     model_config: dict,
     project_root: str,
     event_queue: mp.Queue,
+    response_queue: "mp.Queue | None" = None,
+    auto_approve: bool = False,
 ) -> SubagentResult:
     """Rebuild graph and stream subagent in child process.
 
@@ -824,6 +966,22 @@ def _run_subagent_in_process(
         StallDetectorMiddleware(max_empty_turns=2),
     ]
 
+    # Add HITL middleware for agents with write/execute tools (not read-only mei)
+    if not auto_approve and response_queue is not None and character_name != "mei":
+        from totoro.layers.subagent_hitl import SubagentHITLMiddleware
+        hitl_tools = {"write_file": True, "edit_file": True, "execute": True}
+        # Only intercept tools this agent actually has
+        agent_tool_names = {t.name for t in fs_middleware.tools}
+        hitl_tools = {k: v for k, v in hitl_tools.items() if k in agent_tool_names}
+        if hitl_tools:
+            middleware.append(SubagentHITLMiddleware(
+                interrupt_on=hitl_tools,
+                event_queue=event_queue,
+                response_queue=response_queue,
+                label=label,
+                allow_patterns=_allow_patterns,
+            ))
+
     subagent = create_agent(
         model=model,
         system_prompt=character_prompt,
@@ -851,8 +1009,10 @@ def _run_subagent_in_process(
     pending_ops: dict[str, dict] = {}
     empty_turns = 0
     max_empty_turns = 3
-    max_execution_seconds = 1800  # 30 min absolute safety net
+    max_execution_seconds = 600  # 10 min absolute safety net
+    first_event_timeout = 300    # 5 min to get first response from API (accounts for rate limits)
     start_time = time.time()
+    got_first_event = False
 
     def emit(event_type: str, **data):
         try:
@@ -862,9 +1022,55 @@ def _run_subagent_in_process(
         except Exception:
             pass
 
+    # Stream in a thread so we can detect API-level hangs
+    import queue as _queue
+    stream_queue: _queue.Queue = _queue.Queue(maxsize=100)
+    stream_error: list = []
+
+    def _stream_worker():
+        try:
+            for event in subagent.stream(input_payload, config=config, stream_mode="updates"):
+                stream_queue.put(event)
+            stream_queue.put(None)  # sentinel: stream done
+        except Exception as e:
+            stream_error.append(e)
+            stream_queue.put(None)
+
+    stream_thread = threading.Thread(target=_stream_worker, daemon=True)
+    stream_thread.start()
+
     try:
-        for event in subagent.stream(input_payload, config=config, stream_mode="updates"):
-            # Absolute safety net — only triggers if truly stuck (30 min)
+        while True:
+            # Calculate timeout: shorter before first event, longer after
+            if not got_first_event:
+                wait_timeout = max(0.1, first_event_timeout - (time.time() - start_time))
+            else:
+                wait_timeout = 5.0
+
+            try:
+                event = stream_queue.get(timeout=wait_timeout)
+            except _queue.Empty:
+                # Check for first-event timeout (API not responding)
+                if not got_first_event and (time.time() - start_time) > first_event_timeout:
+                    result.final_text += f"\n[API not responding after {first_event_timeout}s]"
+                    emit("error", text=f"API not responding after {first_event_timeout}s")
+                    break
+                # Check absolute timeout
+                if time.time() - start_time > max_execution_seconds:
+                    result.final_text += f"\n[Subagent timed out after {max_execution_seconds}s]"
+                    emit("error", text=f"Timed out after {max_execution_seconds}s")
+                    break
+                continue
+
+            if event is None:
+                # Stream ended (normal or error)
+                if stream_error:
+                    raise stream_error[0]
+                break
+
+            got_first_event = True
+
+            # Absolute safety net
             if time.time() - start_time > max_execution_seconds:
                 result.final_text += f"\n[Subagent timed out after {max_execution_seconds}s]"
                 emit("error", text=f"Timed out after {max_execution_seconds}s")
@@ -957,26 +1163,59 @@ def _run_subagent_in_process(
                     break
 
     except Exception as e:
-        result.final_text = f"Sub-agent error: {e}"
-        emit("error", text=str(e)[:100])
+        err_str = str(e)
+        # Detect common API errors for clear messaging
+        if "rate" in err_str.lower() or "429" in err_str:
+            err_msg = f"API rate limit: {err_str[:80]}"
+        elif "timeout" in err_str.lower() or "timed out" in err_str.lower():
+            err_msg = f"API timeout: {err_str[:80]}"
+        elif "401" in err_str or "403" in err_str or "auth" in err_str.lower():
+            err_msg = f"API auth error: {err_str[:80]}"
+        elif "connection" in err_str.lower() or "network" in err_str.lower():
+            err_msg = f"Network error: {err_str[:80]}"
+        else:
+            err_msg = f"Error: {err_str[:100]}"
+        result.final_text = f"Sub-agent error: {err_msg}"
+        emit("error", text=err_msg)
 
     return result
 
 
 def _extract_key_args(name: str, args: dict) -> dict:
-    """Extract only the essential args for status tracking (avoids serializing large content).
+    """Extract key args for status tracking and TUI display.
+
+    Includes content preview for write/edit operations so the TUI
+    can show Claude Code-style file content output.
 
     Args:
         name: Tool name.
         args: Full tool call arguments dict.
 
     Returns:
-        Dict with only the key arguments relevant for display.
+        Dict with key arguments relevant for display.
     """
-    if name in ("write_file", "edit_file", "read_file"):
+    if name == "write_file":
+        content = args.get("content", "")
+        lines = content.split("\n")
+        preview = [line[:100] for line in lines[:12]]
+        return {
+            "file_path": args.get("file_path", args.get("path", "")),
+            "content_preview": preview,
+            "line_count": len(lines),
+        }
+    if name == "edit_file":
+        new_str = args.get("new_string", "")
+        lines = new_str.split("\n")
+        preview = [line[:100] for line in lines[:8]]
+        return {
+            "file_path": args.get("file_path", args.get("path", "")),
+            "content_preview": preview,
+            "line_count": len(lines),
+        }
+    if name == "read_file":
         return {"file_path": args.get("file_path", args.get("path", ""))}
     if name == "execute":
-        return {"command": args.get("command", "")[:80]}
+        return {"command": args.get("command", "")[:200]}
     return {}
 
 
@@ -1008,17 +1247,29 @@ def _format_tool_brief(name: str, args: dict) -> str:
 
 # ─── Event collector (runs in parent process, main thread) ───
 
-def _event_collector(event_queue: mp.Queue, halt: threading.Event):
+def _event_collector(event_queue: mp.Queue, halt: threading.Event,
+                     hitl_pending: queue.Queue | None = None):
     """Single thread that consumes events from child processes.
 
     Args:
         event_queue: Multiprocessing queue receiving SubagentEvents from workers.
         halt: Threading event to signal this collector to stop.
+        hitl_pending: Threading queue to relay HITL requests to the TUI thread.
     """
     while not halt.is_set():
         try:
             event = event_queue.get(timeout=0.02)
         except (queue.Empty, EOFError):
+            continue
+
+        # Route HITL requests to TUI thread for user interaction
+        if event.event_type == "hitl_request" and hitl_pending is not None:
+            hitl_pending.put(event)
+            # Also update pane state to show "waiting_approval"
+            if _pane_manager:
+                _pane_manager.update_subagent(event)
+                if _tracker:
+                    _tracker._mark_dirty()
             continue
 
         if _tracker:
@@ -1034,6 +1285,77 @@ def _event_collector(event_queue: mp.Queue, halt: threading.Event):
             # Mark tracker dirty so it re-renders with updated pane data
             if _tracker:
                 _tracker._mark_dirty()
+
+
+def _handle_hitl_no_curses(event: 'SubagentEvent', response_holders: dict):
+    """Handle HITL request without curses (non-tty or fallback).
+
+    Args:
+        event: SubagentEvent with hitl_request data.
+        response_holders: Dict mapping labels to response mp.Queues.
+    """
+    label = event.label
+    tool_requests = event.data.get("tool_requests", [])
+    decisions = []
+
+    for tr in tool_requests:
+        tool_name = tr.get("name", "?")
+        tool_args = tr.get("args", {})
+        print(f"\n  \033[33m[APPROVAL REQUIRED]\033[0m \033[1m{label}\033[0m → \033[1m{tool_name}\033[0m")
+        if isinstance(tool_args, dict):
+            for k, v in tool_args.items():
+                v_str = str(v)
+                if len(v_str) > 200:
+                    v_str = v_str[:200] + "..."
+                print(f"    {k}: {v_str}")
+        print(f"  \033[1m(a)\033[0mpprove / \033[1m(A)\033[0mpprove all / \033[1m(r)\033[0meject / \033[1m(e)\033[0mdit / \033[1m(x)\033[0m abort ?")
+
+        try:
+            choice = input("  > ").strip()
+        except (EOFError, KeyboardInterrupt):
+            decisions.append({"type": "reject", "message": "Aborted"})
+            break
+
+        if choice in ("A", "approve all", "aa"):
+            decisions.append({"type": "approve_all"})
+            break
+        elif choice.lower() in ("r", "reject", "n", "no"):
+            decisions.append({"type": "reject", "message": f"User rejected {tool_name}"})
+        elif choice.lower() in ("e", "edit"):
+            try:
+                edit_instruction = input("  How to change? > ").strip()
+            except (EOFError, KeyboardInterrupt):
+                decisions.append({"type": "approve"})
+                continue
+            if not edit_instruction or not isinstance(tool_args, dict):
+                decisions.append({"type": "approve"})
+            else:
+                edited_args = dict(tool_args)
+                if "=" in edit_instruction and " " not in edit_instruction.split("=")[0]:
+                    key, val = edit_instruction.split("=", 1)
+                    edited_args[key.strip()] = val.strip()
+                decisions.append({
+                    "type": "edit",
+                    "edited_action": {"name": tool_name, "args": edited_args},
+                })
+        elif choice.lower() in ("x", "abort", "q"):
+            decisions.append({"type": "reject", "message": "Aborted"})
+            break
+        else:
+            decisions.append({"type": "approve"})
+
+    response_q = response_holders.get(label)
+    if response_q:
+        try:
+            response_q.put({"decisions": decisions}, timeout=1)
+        except Exception:
+            pass
+
+    # Update pane status back to running
+    if _pane_manager:
+        _pane_manager.update_subagent(SubagentEvent(
+            label=label, event_type="hitl_response", data={},
+        ))
 
 
 # ─── Background render thread ───
