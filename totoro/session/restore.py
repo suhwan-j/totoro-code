@@ -1,14 +1,18 @@
 """Session restore — handles resuming from checkpointed state."""
+
 from totoro.colors import AMBER_LT, AMBER, COPPER, RESET
 
 
-def restore_session(agent, session_id: str, session_manager=None) -> dict | None:
+def restore_session(
+    agent, session_id: str, session_manager=None
+) -> dict | None:
     """Restore a session from checkpoint and report its state.
 
     Args:
         agent: The LangGraph agent instance.
         session_id: Session ID to restore.
-        session_manager: Optional SessionManager for registering restored sessions.
+        session_manager: Optional SessionManager for
+            registering restored sessions.
 
     Returns:
         invoke_config dict if session was restored, None if not found.
@@ -28,11 +32,15 @@ def restore_session(agent, session_id: str, session_manager=None) -> dict | None
     # Register in session manager if provided
     if session_manager:
         if not session_manager.session_exists(session_id):
-            session_manager.create_session(session_id, description="(restored)")
+            session_manager.create_session(
+                session_id, description="(restored)"
+            )
 
     # Report state
     messages = state.values.get("messages", [])
-    turn_count = sum(1 for m in messages if getattr(m, "type", None) == "human")
+    turn_count = sum(
+        1 for m in messages if getattr(m, "type", None) == "human"
+    )
     print(f"{AMBER_LT}Session '{session_id}' restored.{RESET}")
     print(f"  Messages: {len(messages)}, User turns: {turn_count}")
 
@@ -43,7 +51,11 @@ def restore_session(agent, session_id: str, session_manager=None) -> dict | None
             for task in state.tasks:
                 interrupt_val = None
                 if hasattr(task, "interrupts") and task.interrupts:
-                    interrupt_val = task.interrupts[0].value if hasattr(task.interrupts[0], "value") else task.interrupts[0]
+                    interrupt_val = (
+                        task.interrupts[0].value
+                        if hasattr(task.interrupts[0], "value")
+                        else task.interrupts[0]
+                    )
                 if interrupt_val:
                     print(f"    Waiting for approval: {interrupt_val}")
         print("  The agent will resume from the interrupted point.")

@@ -8,8 +8,13 @@ from pathlib import Path
 from dataclasses import dataclass
 
 from totoro.colors import (
-    DIM as _DIM, BOLD as _BOLD, AMBER_LT as _GREEN,
-    BLUE as _CYAN, AMBER as _YELLOW, COPPER as _RED, RESET as _RESET,
+    DIM as _DIM,
+    BOLD as _BOLD,
+    AMBER_LT as _GREEN,
+    BLUE as _CYAN,
+    AMBER as _YELLOW,
+    COPPER as _RED,
+    RESET as _RESET,
 )
 
 
@@ -22,7 +27,7 @@ class SkillInfo:
 
 
 class SkillManager:
-    """Manages skills in built-in/skills/, ~/.totoro/skills/ (global) and .totoro/skills/ (project).
+    """Manages skills in built-in, global, and project dirs.
 
     Precedence (lowest → highest): built-in → global → project.
     """
@@ -34,7 +39,9 @@ class SkillManager:
             project_root: Absolute path to the project root directory.
         """
         # Built-in skills ship with the totoro package
-        self.builtin_dir = Path(__file__).resolve().parent.parent / "built-in" / "skills"
+        self.builtin_dir = (
+            Path(__file__).resolve().parent.parent / "built-in" / "skills"
+        )
         self.global_dir = Path.home() / ".totoro" / "skills"
         self.project_dir = Path(project_root) / ".totoro" / "skills"
 
@@ -60,8 +67,14 @@ class SkillManager:
             paths.append(str(self.project_dir))
         return paths
 
-    def add_skill(self, name: str, description: str, content: str,
-                  allowed_tools: str = "", scope: str = "project") -> Path:
+    def add_skill(
+        self,
+        name: str,
+        description: str,
+        content: str,
+        allowed_tools: str = "",
+        scope: str = "project",
+    ) -> Path:
         """Create a new skill with SKILL.md.
 
         Args:
@@ -90,13 +103,14 @@ description: {description}
         skill_path.write_text(frontmatter + content, encoding="utf-8")
         return skill_path
 
-    def install_skill(self, source: str, skill_name: str = "",
-                      scope: str = "global") -> tuple[str, Path | None]:
+    def install_skill(
+        self, source: str, skill_name: str = "", scope: str = "global"
+    ) -> tuple[str, Path | None]:
         """Install a skill from a remote URL or GitHub repo.
 
         Supports:
           /skill install <url>                        -- single SKILL.md
-          /skill install <repo-url> --skill <name>    -- specific skill from repo's skills/ dir
+          /skill install <repo-url> --skill <name>    -- from repo
           /skill install gh:user/repo --skill <name>  -- same, shorthand
 
         Args:
@@ -113,7 +127,9 @@ description: {description}
             if not repo_info:
                 return f"Cannot parse GitHub repo from: {source}", None
             owner, repo, branch = repo_info
-            return self._install_from_repo(owner, repo, branch, skill_name, scope)
+            return self._install_from_repo(
+                owner, repo, branch, skill_name, scope
+            )
 
         # ── Legacy single-file mode ──
         url = self._resolve_url(source)
@@ -121,7 +137,9 @@ description: {description}
             return f"Cannot resolve source: {source}", None
 
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "totoro-code/1.0"})
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "totoro-code/1.0"}
+            )
             with urllib.request.urlopen(req, timeout=15) as resp:
                 content = resp.read().decode("utf-8")
         except Exception as e:
@@ -149,7 +167,10 @@ description: {description}
         Returns:
             Status message describing what was removed or if not found.
         """
-        for base, scope in [(self.project_dir, "project"), (self.global_dir, "global")]:
+        for base, scope in [
+            (self.project_dir, "project"),
+            (self.global_dir, "global"),
+        ]:
             skill_dir = base / name
             if skill_dir.exists():
                 shutil.rmtree(skill_dir)
@@ -160,7 +181,11 @@ description: {description}
         """Format skill list for display."""
         skills = self.list_skills()
         if not skills:
-            return f"  {_DIM}No skills installed.{_RESET}\n  {_DIM}Use /skill add <name> or /skill install <url>{_RESET}"
+            return (
+                f"  {_DIM}No skills installed.{_RESET}\n"
+                f"  {_DIM}Use /skill add <name>"
+                f" or /skill install <url>{_RESET}"
+            )
 
         lines = []
         # Group by scope
@@ -173,7 +198,12 @@ description: {description}
             for i, s in enumerate(builtin_skills):
                 is_last = i == len(builtin_skills) - 1
                 connector = "└── " if is_last else "├── "
-                lines.append(f"  {_DIM}{connector}{_CYAN}{s.name}{_RESET} {_DIM}— {s.description}{_RESET}")
+                lines.append(
+                    f"  {_DIM}{connector}{_CYAN}"
+                    f"{s.name}{_RESET}"
+                    f" {_DIM}— {s.description}"
+                    f"{_RESET}"
+                )
 
         if global_skills:
             if builtin_skills:
@@ -182,7 +212,12 @@ description: {description}
             for i, s in enumerate(global_skills):
                 is_last = i == len(global_skills) - 1
                 connector = "└── " if is_last else "├── "
-                lines.append(f"  {_DIM}{connector}{_CYAN}{s.name}{_RESET} {_DIM}— {s.description}{_RESET}")
+                lines.append(
+                    f"  {_DIM}{connector}{_CYAN}"
+                    f"{s.name}{_RESET}"
+                    f" {_DIM}— {s.description}"
+                    f"{_RESET}"
+                )
 
         if project_skills:
             if builtin_skills or global_skills:
@@ -191,7 +226,12 @@ description: {description}
             for i, s in enumerate(project_skills):
                 is_last = i == len(project_skills) - 1
                 connector = "└── " if is_last else "├── "
-                lines.append(f"  {_DIM}{connector}{_CYAN}{s.name}{_RESET} {_DIM}— {s.description}{_RESET}")
+                lines.append(
+                    f"  {_DIM}{connector}{_CYAN}"
+                    f"{s.name}{_RESET}"
+                    f" {_DIM}— {s.description}"
+                    f"{_RESET}"
+                )
 
         return "\n".join(lines)
 
@@ -208,7 +248,11 @@ description: {description}
             if not skill_md.exists():
                 continue
             desc = self._read_description(skill_md)
-            skills.append(SkillInfo(name=child.name, description=desc, path=child, scope=scope))
+            skills.append(
+                SkillInfo(
+                    name=child.name, description=desc, path=child, scope=scope
+                )
+            )
         return skills
 
     def _read_description(self, skill_md: Path) -> str:
@@ -230,10 +274,14 @@ description: {description}
         if source.startswith("http://") or source.startswith("https://"):
             # Direct URL — if GitHub blob, convert to raw
             if "github.com" in source and "/blob/" in source:
-                return source.replace("github.com", "raw.githubusercontent.com").replace("/blob/", "/")
+                return source.replace(
+                    "github.com", "raw.githubusercontent.com"
+                ).replace("/blob/", "/")
             if "github.com" in source and "/tree/" in source:
                 # Assume SKILL.md in directory
-                raw = source.replace("github.com", "raw.githubusercontent.com").replace("/tree/", "/")
+                raw = source.replace(
+                    "github.com", "raw.githubusercontent.com"
+                ).replace("/tree/", "/")
                 return raw.rstrip("/") + "/SKILL.md"
             return source
 
@@ -280,9 +328,10 @@ description: {description}
 
         return None
 
-    def _install_from_repo(self, owner: str, repo: str, branch: str,
-                           skill_name: str, scope: str) -> tuple[str, Path | None]:
-        """Download an entire skill directory from a GitHub repo's skills/ folder.
+    def _install_from_repo(
+        self, owner: str, repo: str, branch: str, skill_name: str, scope: str
+    ) -> tuple[str, Path | None]:
+        """Download a skill directory from a GitHub repo.
 
         Args:
             owner: GitHub repository owner.
@@ -299,10 +348,17 @@ description: {description}
         try:
             entries = self._github_api_get(api_url)
         except Exception as e:
-            return f"Failed to fetch skill '{skill_name}' from {owner}/{repo}: {e}", None
+            return (
+                f"Failed to fetch skill '{skill_name}'"
+                f" from {owner}/{repo}: {e}",
+                None,
+            )
 
         if not isinstance(entries, list):
-            return f"Skill '{skill_name}' not found in {owner}/{repo}/skills/", None
+            return (
+                f"Skill '{skill_name}' not found in {owner}/{repo}/skills/",
+                None,
+            )
 
         base = self.global_dir if scope == "global" else self.project_dir
         skill_dir = base / skill_name
@@ -312,17 +368,28 @@ description: {description}
             shutil.rmtree(skill_dir)
         skill_dir.mkdir(parents=True, exist_ok=True)
 
-        file_count = self._download_github_dir(entries, skill_dir, owner, repo, branch)
+        file_count = self._download_github_dir(
+            entries, skill_dir, owner, repo, branch
+        )
 
         # Verify SKILL.md exists
         if not (skill_dir / "SKILL.md").exists():
             shutil.rmtree(skill_dir)
-            return f"No SKILL.md found in {owner}/{repo}/skills/{skill_name}", None
+            return (
+                f"No SKILL.md found in {owner}/{repo}/skills/{skill_name}",
+                None,
+            )
 
-        return f"Installed '{skill_name}' ({file_count} files) from {owner}/{repo}", skill_dir
+        return (
+            f"Installed '{skill_name}'"
+            f" ({file_count} files)"
+            f" from {owner}/{repo}",
+            skill_dir,
+        )
 
-    def _download_github_dir(self, entries: list, dest: Path,
-                             owner: str, repo: str, branch: str) -> int:
+    def _download_github_dir(
+        self, entries: list, dest: Path, owner: str, repo: str, branch: str
+    ) -> int:
         """Recursively download a GitHub directory tree.
 
         Args:
@@ -343,7 +410,9 @@ description: {description}
                 if download_url:
                     try:
                         req = urllib.request.Request(
-                            download_url, headers={"User-Agent": "totoro-code/1.0"})
+                            download_url,
+                            headers={"User-Agent": "totoro-code/1.0"},
+                        )
                         with urllib.request.urlopen(req, timeout=15) as resp:
                             data = resp.read()
                         file_path = dest / name
@@ -358,7 +427,8 @@ description: {description}
                     sub_entries = self._github_api_get(entry["url"])
                     if isinstance(sub_entries, list):
                         count += self._download_github_dir(
-                            sub_entries, sub_dir, owner, repo, branch)
+                            sub_entries, sub_dir, owner, repo, branch
+                        )
                 except Exception:
                     pass
         return count
@@ -372,10 +442,13 @@ description: {description}
         Returns:
             Parsed JSON response (list or dict).
         """
-        req = urllib.request.Request(url, headers={
-            "User-Agent": "totoro-code/1.0",
-            "Accept": "application/vnd.github.v3+json",
-        })
+        req = urllib.request.Request(
+            url,
+            headers={
+                "User-Agent": "totoro-code/1.0",
+                "Accept": "application/vnd.github.v3+json",
+            },
+        )
         # Use token if available
         token = os.environ.get("GITHUB_TOKEN") or os.environ.get("GH_TOKEN")
         if token:

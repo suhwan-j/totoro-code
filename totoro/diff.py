@@ -6,7 +6,13 @@ import sys
 from totoro.utils import sanitize_text
 
 # ANSI colors (palette-based)
-from totoro.colors import DIM as _DIM, AMBER_LT as _GREEN, COPPER as _RED, BLUE as _CYAN, RESET as _RESET
+from totoro.colors import (
+    DIM as _DIM,
+    AMBER_LT as _GREEN,
+    COPPER as _RED,
+    BLUE as _CYAN,
+    RESET as _RESET,
+)
 
 
 def find_line_number(file_path: str, search_text: str) -> int | None:
@@ -30,16 +36,18 @@ def find_line_number(file_path: str, search_text: str) -> int | None:
         return None
 
 
-def format_file_diff(tool_name: str, args: dict, start_line: int | None = None) -> str | None:
+def format_file_diff(
+    tool_name: str, args: dict, start_line: int | None = None
+) -> str | None:
     """Format a file operation as a visual diff block.
 
     Args:
-        tool_name: Tool that performed the file operation (e.g. "write_file", "edit_file").
+        tool_name: Tool that performed the operation.
         args: Tool arguments containing file path and content/changes.
         start_line: Optional starting line number for context in edit diffs.
 
     Returns:
-        ANSI-formatted diff string, or None if the tool is not a file operation.
+        ANSI-formatted diff string, or None.
     """
     file_path = args.get("file_path", "")
     # Show relative path if possible
@@ -59,13 +67,21 @@ def format_file_diff(tool_name: str, args: dict, start_line: int | None = None) 
         max_preview = 8
         if added <= max_preview:
             for i, line in enumerate(lines, 1):
-                preview_lines.append(f"      {_DIM}{i:>4}{_RESET} {_GREEN}+{line}{_RESET}")
+                preview_lines.append(
+                    f"      {_DIM}{i:>4}{_RESET} {_GREEN}+{line}{_RESET}"
+                )
         else:
             for i, line in enumerate(lines[:4], 1):
-                preview_lines.append(f"      {_DIM}{i:>4}{_RESET} {_GREEN}+{line}{_RESET}")
-            preview_lines.append(f"      {_DIM}     ... ({added - 6} more lines){_RESET}")
+                preview_lines.append(
+                    f"      {_DIM}{i:>4}{_RESET} {_GREEN}+{line}{_RESET}"
+                )
+            preview_lines.append(
+                f"      {_DIM}     ... ({added - 6} more lines){_RESET}"
+            )
             for i, line in enumerate(lines[-2:], added - 1):
-                preview_lines.append(f"      {_DIM}{i:>4}{_RESET} {_GREEN}+{line}{_RESET}")
+                preview_lines.append(
+                    f"      {_DIM}{i:>4}{_RESET} {_GREEN}+{line}{_RESET}"
+                )
         return header + "\n" + "\n".join(preview_lines)
 
     if tool_name == "edit_file":
@@ -77,7 +93,10 @@ def format_file_diff(tool_name: str, args: dict, start_line: int | None = None) 
         removed = len(old_lines)
 
         header = f"\n{_CYAN}● Update({rel}){_RESET}"
-        header += f"\n  {_DIM}⎿  Added {added} lines, removed {removed} lines{_RESET}"
+        header += (
+            f"\n  {_DIM}⎿  Added {added} lines,"
+            f" removed {removed} lines{_RESET}"
+        )
 
         diff_lines = []
 
@@ -85,15 +104,27 @@ def format_file_diff(tool_name: str, args: dict, start_line: int | None = None) 
         max_context = 10
         for i, line in enumerate(old_lines[:max_context]):
             ln = f"{start_line + i:>4}" if start_line else "    "
-            diff_lines.append(f"      {_DIM}{ln}{_RESET} {_RED}-{line}{_RESET}")
+            diff_lines.append(
+                f"      {_DIM}{ln}{_RESET} {_RED}-{line}{_RESET}"
+            )
         if len(old_lines) > max_context:
-            diff_lines.append(f"      {_DIM}     ... ({len(old_lines) - max_context} more removed){_RESET}")
+            diff_lines.append(
+                f"      {_DIM}     ..."
+                f" ({len(old_lines) - max_context}"
+                f" more removed){_RESET}"
+            )
 
         for i, line in enumerate(new_lines[:max_context]):
             ln = f"{start_line + i:>4}" if start_line else "    "
-            diff_lines.append(f"      {_DIM}{ln}{_RESET} {_GREEN}+{line}{_RESET}")
+            diff_lines.append(
+                f"      {_DIM}{ln}{_RESET} {_GREEN}+{line}{_RESET}"
+            )
         if len(new_lines) > max_context:
-            diff_lines.append(f"      {_DIM}     ... ({len(new_lines) - max_context} more added){_RESET}")
+            diff_lines.append(
+                f"      {_DIM}     ..."
+                f" ({len(new_lines) - max_context}"
+                f" more added){_RESET}"
+            )
 
         return header + "\n" + "\n".join(diff_lines)
 

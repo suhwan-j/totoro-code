@@ -71,7 +71,7 @@ class HotkeyListener:
                 if not rlist:
                     continue
                 ch = sys.stdin.read(1)
-                if ch == '\x1b':
+                if ch == "\x1b":
                     self._read_escape_seq()
             except (OSError, ValueError):
                 break
@@ -83,7 +83,7 @@ class HotkeyListener:
             return  # plain Escape — ignore
 
         ch2 = sys.stdin.read(1)
-        if ch2 != '[':
+        if ch2 != "[":
             self._drain()
             return
 
@@ -92,7 +92,7 @@ class HotkeyListener:
             return
 
         ch3 = sys.stdin.read(1)
-        if ch3 == 'Z':
+        if ch3 == "Z":
             # Shift+Tab!
             self._cycle_mode()
         else:
@@ -110,5 +110,10 @@ class HotkeyListener:
         """Cycle mode and print inline notification."""
         new_mode = self._handler.cycle_mode()
         color = {"auto-approve": AMBER, "plan-only": IVORY}.get(new_mode, BLUE)
-        sys.stdout.write(f"\r{_DIM}  ⏵⏵ {color}{new_mode}{_RESET}{_DIM} on (shift+tab to cycle){_RESET}\033[K\n")
+        sys.stdout.write(
+            f"\r{_DIM}  ⏵⏵ {color}{new_mode}"
+            f"{_RESET}{_DIM}"
+            f" on (shift+tab to cycle)"
+            f"{_RESET}\033[K\n"
+        )
         sys.stdout.flush()

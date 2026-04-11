@@ -18,21 +18,21 @@ if TYPE_CHECKING:
 
 
 # curses color pair IDs (mapped to palette)
-_PAIR_DIM = 1        # Ivory dark  #4A3C28 → divider / dim
-_PAIR_GREEN = 2      # Amber light #FAC775 → done / progress
-_PAIR_YELLOW = 3     # Amber       #EF9F27 → active / accent
-_PAIR_CYAN = 4       # Blue        #378ADD → prompt / heading
-_PAIR_RED = 5        # Copper      #C85A38 → error
-_PAIR_BLUE = 6       # Blue light  #85B7EB → body / tools
-_PAIR_MAGENTA = 7    # Ivory       #C4A876 → secondary
-_PAIR_BOLD_WHITE = 8 # Ivory light #EDE0C4 → body text
-_PAIR_DIVIDER = 9    # Ivory dark  #4A3C28
+_PAIR_DIM = 1  # Ivory dark  #4A3C28 → divider / dim
+_PAIR_GREEN = 2  # Amber light #FAC775 → done / progress
+_PAIR_YELLOW = 3  # Amber       #EF9F27 → active / accent
+_PAIR_CYAN = 4  # Blue        #378ADD → prompt / heading
+_PAIR_RED = 5  # Copper      #C85A38 → error
+_PAIR_BLUE = 6  # Blue light  #85B7EB → body / tools
+_PAIR_MAGENTA = 7  # Ivory       #C4A876 → secondary
+_PAIR_BOLD_WHITE = 8  # Ivory light #EDE0C4 → body text
+_PAIR_DIVIDER = 9  # Ivory dark  #4A3C28
 
-_ANSI_RE = re.compile(r'(?:\033|\x1b)\[[0-9;]*[A-Za-z]|\^\[\[[0-9;]*[A-Za-z]')
+_ANSI_RE = re.compile(r"(?:\033|\x1b)\[[0-9;]*[A-Za-z]|\^\[\[[0-9;]*[A-Za-z]")
 
 
 def _strip_ansi(text: str) -> str:
-    return _ANSI_RE.sub('', text)
+    return _ANSI_RE.sub("", text)
 
 
 def _wcwidth(ch: str) -> int:
@@ -46,14 +46,16 @@ def _wcwidth(ch: str) -> int:
     """
     cp = ord(ch)
     # CJK Unified Ideographs, Hangul Syllables, fullwidth forms, etc.
-    if (0x1100 <= cp <= 0x115F or   # Hangul Jamo
-        0x2E80 <= cp <= 0x9FFF or   # CJK radicals, unified ideographs
-        0xAC00 <= cp <= 0xD7AF or   # Hangul Syllables
-        0xF900 <= cp <= 0xFAFF or   # CJK Compatibility Ideographs
-        0xFE10 <= cp <= 0xFE6F or   # CJK forms
-        0xFF01 <= cp <= 0xFF60 or   # Fullwidth forms
-        0xFFE0 <= cp <= 0xFFE6 or   # Fullwidth signs
-        0x20000 <= cp <= 0x2FA1F):  # CJK Extension B+
+    if (
+        0x1100 <= cp <= 0x115F  # Hangul Jamo
+        or 0x2E80 <= cp <= 0x9FFF  # CJK radicals, unified ideographs
+        or 0xAC00 <= cp <= 0xD7AF  # Hangul Syllables
+        or 0xF900 <= cp <= 0xFAFF  # CJK Compatibility Ideographs
+        or 0xFE10 <= cp <= 0xFE6F  # CJK forms
+        or 0xFF01 <= cp <= 0xFF60  # Fullwidth forms
+        or 0xFFE0 <= cp <= 0xFFE6  # Fullwidth signs
+        or 0x20000 <= cp <= 0x2FA1F
+    ):  # CJK Extension B+
         return 2
     return 1
 
@@ -139,22 +141,28 @@ def _short_path(path: str) -> str:
     if not path:
         return "?"
     import os
+
     return os.path.basename(path)
 
 
 def _extract_filename_from_summary(summary: str) -> str:
     """Extract filename from tool summary like 'write_file(foo.py)'."""
     import re
-    m = re.search(r'\(([^)]+)\)', summary)
+
+    m = re.search(r"\(([^)]+)\)", summary)
     return m.group(1) if m else ""
 
 
 class SplitPaneTUI:
     """Split-pane TUI using curses. Left=dashboard, Right=subagent detail."""
 
-    def __init__(self, tracker: 'StatusTracker', pane_manager: 'PaneManager',
-                 hitl_pending: 'queue.Queue | None' = None,
-                 response_queues: 'dict | None' = None):
+    def __init__(
+        self,
+        tracker: "StatusTracker",
+        pane_manager: "PaneManager",
+        hitl_pending: "queue.Queue | None" = None,
+        response_queues: "dict | None" = None,
+    ):
         self.tracker = tracker
         self.pane_manager = pane_manager
         self.hitl_pending = hitl_pending
@@ -184,16 +192,22 @@ class SplitPaneTUI:
         # Only if terminal supports color changes; fall back to defaults
         _can_change = curses.can_change_color()
         if _can_change:
+
             def _rgb(r, g, b):
-                return int(r / 255 * 1000), int(g / 255 * 1000), int(b / 255 * 1000)
-            curses.init_color(16, *_rgb(96, 80, 58))      # #60503A ivory dark
-            curses.init_color(17, *_rgb(255, 216, 153))   # #FFD899 amber light
-            curses.init_color(18, *_rgb(245, 178, 64))    # #F5B240 amber
-            curses.init_color(19, *_rgb(86, 160, 240))    # #56A0F0 blue
-            curses.init_color(20, *_rgb(224, 104, 64))    # #E06840 copper
-            curses.init_color(21, *_rgb(168, 207, 250))   # #A8CFFA blue light
-            curses.init_color(22, *_rgb(212, 186, 142))   # #D4BA8E ivory
-            curses.init_color(23, *_rgb(245, 236, 216))   # #F5ECD8 ivory light
+                return (
+                    int(r / 255 * 1000),
+                    int(g / 255 * 1000),
+                    int(b / 255 * 1000),
+                )
+
+            curses.init_color(16, *_rgb(96, 80, 58))  # #60503A ivory dark
+            curses.init_color(17, *_rgb(255, 216, 153))  # #FFD899 amber light
+            curses.init_color(18, *_rgb(245, 178, 64))  # #F5B240 amber
+            curses.init_color(19, *_rgb(86, 160, 240))  # #56A0F0 blue
+            curses.init_color(20, *_rgb(224, 104, 64))  # #E06840 copper
+            curses.init_color(21, *_rgb(168, 207, 250))  # #A8CFFA blue light
+            curses.init_color(22, *_rgb(212, 186, 142))  # #D4BA8E ivory
+            curses.init_color(23, *_rgb(245, 236, 216))  # #F5ECD8 ivory light
             curses.init_pair(_PAIR_DIM, 16, -1)
             curses.init_pair(_PAIR_GREEN, 17, -1)
             curses.init_pair(_PAIR_YELLOW, 18, -1)
@@ -222,7 +236,9 @@ class SplitPaneTUI:
         self._div_col = int(w * 0.5)
 
         self._left_win = curses.newwin(h, self._div_col, 0, 0)
-        self._right_win = curses.newwin(h, w - self._div_col - 1, 0, self._div_col + 1)
+        self._right_win = curses.newwin(
+            h, w - self._div_col - 1, 0, self._div_col + 1
+        )
 
         self._running = True
         prev_h, prev_w = h, w
@@ -235,8 +251,15 @@ class SplitPaneTUI:
                     prev_h, prev_w = h, w
                     self._div_col = int(w * 0.5)
                     try:
-                        self._left_win = curses.newwin(h, max(1, self._div_col), 0, 0)
-                        self._right_win = curses.newwin(h, max(1, w - self._div_col - 1), 0, self._div_col + 1)
+                        self._left_win = curses.newwin(
+                            h, max(1, self._div_col), 0, 0
+                        )
+                        self._right_win = curses.newwin(
+                            h,
+                            max(1, w - self._div_col - 1),
+                            0,
+                            self._div_col + 1,
+                        )
                     except curses.error:
                         pass
                     stdscr.clear()
@@ -256,8 +279,11 @@ class SplitPaneTUI:
                     time.sleep(0.5)
                     break
 
-                # Check for pending HITL requests — batch all pending into one curses exit
-                if self.hitl_pending is not None and not self._global_auto_approve:
+                # Check for pending HITL requests
+                if (
+                    self.hitl_pending is not None
+                    and not self._global_auto_approve
+                ):
                     try:
                         hitl_event = self.hitl_pending.get_nowait()
                         self._handle_hitl_batch(stdscr, hitl_event)
@@ -292,16 +318,22 @@ class SplitPaneTUI:
     def _send_hitl_response_event(self, label: str):
         """Update pane status back to running after HITL response."""
         from totoro.pane import SubagentEvent
+
         if self.pane_manager:
-            self.pane_manager.update_subagent(SubagentEvent(
-                label=label, event_type="hitl_response", data={},
-            ))
+            self.pane_manager.update_subagent(
+                SubagentEvent(
+                    label=label,
+                    event_type="hitl_response",
+                    data={},
+                )
+            )
 
     def _exit_curses(self, stdscr):
         """Cleanly exit curses for terminal input."""
         curses.endwin()
-        os.system('stty sane 2>/dev/null')
+        os.system("stty sane 2>/dev/null")
         import sys
+
         sys.stdout.write("\033[?25h")  # Show cursor
         sys.stdout.flush()
 
@@ -316,7 +348,9 @@ class SplitPaneTUI:
         self._div_col = int(w * 0.5)
         try:
             self._left_win = curses.newwin(h, max(1, self._div_col), 0, 0)
-            self._right_win = curses.newwin(h, max(1, w - self._div_col - 1), 0, self._div_col + 1)
+            self._right_win = curses.newwin(
+                h, max(1, w - self._div_col - 1), 0, self._div_col + 1
+            )
         except curses.error:
             pass
 
@@ -340,7 +374,7 @@ class SplitPaneTUI:
                 break
 
     def _handle_hitl_batch(self, stdscr, first_event):
-        """Exit curses once, process all pending HITL events, re-enter curses once.
+        """Exit curses, process HITL events, re-enter.
 
         Avoids repeated curses exit/enter cycles that corrupt terminal state.
         """
@@ -358,31 +392,51 @@ class SplitPaneTUI:
                 tool_name = tr.get("name", "?")
                 tool_args = tr.get("args", {})
 
-                print(f"\n  \033[33m[APPROVAL REQUIRED]\033[0m \033[1m{tool_name}\033[0m")
+                print(
+                    f"\n  \033[33m[APPROVAL REQUIRED]"
+                    f"\033[0m \033[1m{tool_name}\033[0m"
+                )
                 if isinstance(tool_args, dict):
                     for k, v in tool_args.items():
                         v_str = str(v)
                         if len(v_str) > 300:
                             v_str = v_str[:300] + "..."
                         print(f"    {k}: {v_str}")
-                print(f"  \033[1m(a)\033[0mpprove / \033[1m(A)\033[0mpprove all / \033[1m(r)\033[0meject / \033[1m(e)\033[0mdit ?")
+                print(
+                    "  \033[1m(a)\033[0mpprove / "
+                    "\033[1m(A)\033[0mpprove all / "
+                    "\033[1m(r)\033[0meject / "
+                    "\033[1m(e)\033[0mdit ?"
+                )
 
                 try:
                     choice = input("  > ").strip()
                 except (EOFError, KeyboardInterrupt):
-                    decisions.append({"type": "reject", "message": "Aborted by user"})
+                    decisions.append(
+                        {"type": "reject", "message": "Aborted by user"}
+                    )
                     break
 
                 if choice in ("A", "approve all", "aa"):
                     decisions.append({"type": "approve_all"})
                     self._global_auto_approve = True
-                    # Also set module-level flag so new TUI instances inherit it
+                    # Set module-level flag too
                     import totoro.orchestrator as _orch
+
                     _orch._runtime_auto_approve = True
-                    print(f"  \033[33m\u26a1 Auto-approve enabled for all subagents\033[0m")
+                    print(
+                        "  \033[33m\u26a1 Auto-approve"
+                        " enabled for all"
+                        " subagents\033[0m"
+                    )
                     break
                 elif choice.lower() in ("r", "reject", "n", "no"):
-                    decisions.append({"type": "reject", "message": f"User rejected {tool_name}"})
+                    decisions.append(
+                        {
+                            "type": "reject",
+                            "message": f"User rejected {tool_name}",
+                        }
+                    )
                 elif choice.lower() in ("e", "edit"):
                     try:
                         edit_instruction = input("  How to change? > ").strip()
@@ -393,13 +447,21 @@ class SplitPaneTUI:
                         decisions.append({"type": "approve"})
                     else:
                         edited_args = dict(tool_args)
-                        if "=" in edit_instruction and " " not in edit_instruction.split("=")[0]:
+                        if (
+                            "=" in edit_instruction
+                            and " " not in edit_instruction.split("=")[0]
+                        ):
                             key, val = edit_instruction.split("=", 1)
                             edited_args[key.strip()] = val.strip()
-                        decisions.append({
-                            "type": "edit",
-                            "edited_action": {"name": tool_name, "args": edited_args},
-                        })
+                        decisions.append(
+                            {
+                                "type": "edit",
+                                "edited_action": {
+                                    "name": tool_name,
+                                    "args": edited_args,
+                                },
+                            }
+                        )
                 else:
                     decisions.append({"type": "approve"})
 
@@ -436,8 +498,12 @@ class SplitPaneTUI:
         for row in range(height):
             try:
                 ch = "┊" if row % 2 == 0 else " "
-                self._stdscr.addstr(row, self._div_col, ch,
-                                    curses.color_pair(_PAIR_DIM) | curses.A_DIM)
+                self._stdscr.addstr(
+                    row,
+                    self._div_col,
+                    ch,
+                    curses.color_pair(_PAIR_DIM) | curses.A_DIM,
+                )
             except curses.error:
                 pass
 
@@ -459,12 +525,20 @@ class SplitPaneTUI:
         title_col = _wcswidth(prefix)
         self._waddstr(win, 0, title_col, title, _PAIR_CYAN, bold=True)
         phase = self.tracker.phase
-        phase_pair = _PAIR_YELLOW if phase == "Planning" else _PAIR_GREEN if phase == "Executing" else _PAIR_DIM
+        phase_pair = (
+            _PAIR_YELLOW
+            if phase == "Planning"
+            else _PAIR_GREEN
+            if phase == "Executing"
+            else _PAIR_DIM
+        )
         phase_col = title_col + _wcswidth(title)
         self._waddstr(win, 0, phase_col, phase, phase_pair, bold=True)
 
         # Counters
-        done_count = sum(1 for t in self.tracker.todos if t.status == "completed")
+        done_count = sum(
+            1 for t in self.tracker.todos if t.status == "completed"
+        )
         total_count = len(self.tracker.todos)
         agent_count = len(self.tracker.active_subagents)
         counters = []
@@ -474,7 +548,9 @@ class SplitPaneTUI:
         if agent_count > 0:
             counters.append(f"Agents: {agent_count}")
         counter_text = f"  {' · '.join(counters)}"
-        self._waddstr(win, 0, phase_col + len(phase) + 1, counter_text, _PAIR_DIM)
+        self._waddstr(
+            win, 0, phase_col + len(phase) + 1, counter_text, _PAIR_DIM
+        )
         row = 1
 
         # Separator
@@ -536,22 +612,67 @@ class SplitPaneTUI:
 
                 if pane and pane.status == "done":
                     self._waddstr(win, row, 3, connector, _PAIR_DIM)
-                    self._waddstr(win, row, 3 + len(connector), "✓ ", _PAIR_GREEN)
-                    self._waddstr(win, row, 3 + len(connector) + 2, name, _PAIR_GREEN, bold=True)
+                    self._waddstr(
+                        win, row, 3 + len(connector), "✓ ", _PAIR_GREEN
+                    )
+                    self._waddstr(
+                        win,
+                        row,
+                        3 + len(connector) + 2,
+                        name,
+                        _PAIR_GREEN,
+                        bold=True,
+                    )
                     if pid_str:
-                        self._waddstr(win, row, 3 + len(connector) + 2 + len(name) + 1, pid_str, _PAIR_DIM)
+                        self._waddstr(
+                            win,
+                            row,
+                            3 + len(connector) + 2 + len(name) + 1,
+                            pid_str,
+                            _PAIR_DIM,
+                        )
                 elif pane and pane.status == "waiting_approval":
                     self._waddstr(win, row, 3, connector, _PAIR_DIM)
-                    self._waddstr(win, row, 3 + len(connector), "⏸ ", _PAIR_YELLOW)
-                    self._waddstr(win, row, 3 + len(connector) + 2, name, _PAIR_YELLOW, bold=True)
+                    self._waddstr(
+                        win, row, 3 + len(connector), "⏸ ", _PAIR_YELLOW
+                    )
+                    self._waddstr(
+                        win,
+                        row,
+                        3 + len(connector) + 2,
+                        name,
+                        _PAIR_YELLOW,
+                        bold=True,
+                    )
                     if pid_str:
-                        self._waddstr(win, row, 3 + len(connector) + 2 + len(name) + 1, pid_str, _PAIR_DIM)
+                        self._waddstr(
+                            win,
+                            row,
+                            3 + len(connector) + 2 + len(name) + 1,
+                            pid_str,
+                            _PAIR_DIM,
+                        )
                 else:
                     self._waddstr(win, row, 3, connector, _PAIR_DIM)
-                    self._waddstr(win, row, 3 + len(connector), "◈ ", _PAIR_MAGENTA)
-                    self._waddstr(win, row, 3 + len(connector) + 2, name, _PAIR_BOLD_WHITE, bold=True)
+                    self._waddstr(
+                        win, row, 3 + len(connector), "◈ ", _PAIR_MAGENTA
+                    )
+                    self._waddstr(
+                        win,
+                        row,
+                        3 + len(connector) + 2,
+                        name,
+                        _PAIR_BOLD_WHITE,
+                        bold=True,
+                    )
                     if pid_str:
-                        self._waddstr(win, row, 3 + len(connector) + 2 + len(name) + 1, pid_str, _PAIR_DIM)
+                        self._waddstr(
+                            win,
+                            row,
+                            3 + len(connector) + 2 + len(name) + 1,
+                            pid_str,
+                            _PAIR_DIM,
+                        )
 
                 token_total = 0
                 if pane:
@@ -562,7 +683,13 @@ class SplitPaneTUI:
                         stats_text += f" · {token_total} tok"
                     else:
                         stats_text += f" · {token_total // 1000}k tok"
-                self._waddstr(win, row, 3 + len(connector) + 2 + len(name_with_pid), stats_text, _PAIR_DIM)
+                self._waddstr(
+                    win,
+                    row,
+                    3 + len(connector) + 2 + len(name_with_pid),
+                    stats_text,
+                    _PAIR_DIM,
+                )
                 row += 1
 
                 # Task goal/description (max 2 lines)
@@ -571,19 +698,29 @@ class SplitPaneTUI:
                     prefix = "▸ "
                     # Leave 2-char margin to avoid touching divider
                     max_w = w - indent - _wcswidth(prefix) - 2
-                    desc_lines = _wrap_text(pane.description, max_w, max_lines=2)
+                    desc_lines = _wrap_text(
+                        pane.description, max_w, max_lines=2
+                    )
                     for li, dline in enumerate(desc_lines):
                         if row >= height - 1:
                             break
                         self._waddstr(win, row, 3, child_pre, _PAIR_DIM)
                         pfx = prefix if li == 0 else "  "
-                        self._waddstr(win, row, indent, f"{pfx}{dline}", _PAIR_MAGENTA)
+                        self._waddstr(
+                            win, row, indent, f"{pfx}{dline}", _PAIR_MAGENTA
+                        )
                         row += 1
 
                 # Current tool
                 if pane and pane.current_tool and row < height - 1:
                     self._waddstr(win, row, 3, child_pre, _PAIR_DIM)
-                    self._waddstr(win, row, 3 + len(child_pre), f"⚡ {pane.current_tool}", _PAIR_BLUE)
+                    self._waddstr(
+                        win,
+                        row,
+                        3 + len(child_pre),
+                        f"⚡ {pane.current_tool}",
+                        _PAIR_BLUE,
+                    )
                     row += 1
 
         win.noutrefresh()
@@ -608,7 +745,9 @@ class SplitPaneTUI:
 
         # Only show running panes — completed ones disappear from right panel
         # (left panel tree still shows them with ✓)
-        running_panes = [p for p in panes if p.status in ("running", "waiting_approval")]
+        running_panes = [
+            p for p in panes if p.status in ("running", "waiting_approval")
+        ]
         n_running = len(running_panes)
 
         if n_running == 0:
@@ -642,12 +781,18 @@ class SplitPaneTUI:
                 # Header
                 elapsed = pane.elapsed
                 pid_str = f"({pane.pid})" if pane.pid else ""
-                label_display = f"{pane.label} {pid_str}" if pid_str else pane.label
+                label_display = (
+                    f"{pane.label} {pid_str}" if pid_str else pane.label
+                )
 
                 self._waddstr(win, row, 1, "◈ ", _PAIR_CYAN)
-                self._waddstr(win, row, 3, pane.label, _PAIR_BOLD_WHITE, bold=True)
+                self._waddstr(
+                    win, row, 3, pane.label, _PAIR_BOLD_WHITE, bold=True
+                )
                 if pid_str:
-                    self._waddstr(win, row, 3 + len(pane.label) + 1, pid_str, _PAIR_DIM)
+                    self._waddstr(
+                        win, row, 3 + len(pane.label) + 1, pid_str, _PAIR_DIM
+                    )
 
                 token_total = pane.token_input + pane.token_output
                 stats = f"  {elapsed} · {pane.tool_count} tools"
@@ -656,12 +801,20 @@ class SplitPaneTUI:
                         stats += f" · {token_total} tok"
                     else:
                         stats += f" · {token_total // 1000}k tok"
-                self._waddstr(win, row, 3 + len(label_display), stats, _PAIR_DIM)
+                self._waddstr(
+                    win, row, 3 + len(label_display), stats, _PAIR_DIM
+                )
                 row += 1
 
                 # Current tool indicator
                 if pane.current_tool and row < end_row - 1:
-                    self._waddstr(win, row, 2, _truncate_to_width(f"⚡ {pane.current_tool}", w - 3), _PAIR_YELLOW)
+                    self._waddstr(
+                        win,
+                        row,
+                        2,
+                        _truncate_to_width(f"⚡ {pane.current_tool}", w - 3),
+                        _PAIR_YELLOW,
+                    )
                     row += 1
 
                 # Tool history — Claude Code style with content preview
@@ -677,14 +830,20 @@ class SplitPaneTUI:
                         # Each tool call needs at least 1 line (header)
                         # Plus optional content lines
                         needed = 1  # ● ToolName(args)
-                        if tc.name in ("write_file", "edit_file") and tc.content_lines:
+                        if (
+                            tc.name in ("write_file", "edit_file")
+                            and tc.content_lines
+                        ):
                             needed += 1  # ⎿ Wrote N lines
                             needed += min(len(tc.content_lines), 6)
                             if tc.line_count > len(tc.content_lines):
                                 needed += 1  # … +N more lines
                         elif tc.name == "execute" and tc.result_preview:
-                            needed += min(tc.result_preview.count('\n') + 1, 3)
-                        elif tc.result_preview and tc.name not in ("write_file", "edit_file"):
+                            needed += min(tc.result_preview.count("\n") + 1, 3)
+                        elif tc.result_preview and tc.name not in (
+                            "write_file",
+                            "edit_file",
+                        ):
                             needed += 1  # ⎿ result
                         if budget < needed:
                             break
@@ -694,24 +853,52 @@ class SplitPaneTUI:
 
                     hidden = len(history) - len(visible)
                     if hidden > 0 and row < end_row - 1:
-                        self._waddstr(win, row, 2, f"  +{hidden} earlier tool calls", _PAIR_DIM)
+                        self._waddstr(
+                            win,
+                            row,
+                            2,
+                            f"  +{hidden} earlier tool calls",
+                            _PAIR_DIM,
+                        )
                         row += 1
 
                     for tc in visible:
                         if row >= end_row - 1:
                             break
 
-                        # Resolve display filename: prefer file_path, fallback to summary
-                        _fname = _short_path(tc.file_path) if tc.file_path else _extract_filename_from_summary(tc.summary) or "?"
+                        # Resolve display filename
+                        _fname = (
+                            _short_path(tc.file_path)
+                            if tc.file_path
+                            else _extract_filename_from_summary(tc.summary)
+                            or "?"
+                        )
 
                         # ● ToolHeader — Claude Code style
                         if tc.name == "write_file":
                             header = f"● Write({_fname})"
-                            self._waddstr(win, row, 1, _truncate_to_width(header, w - 2), _PAIR_CYAN, bold=True)
+                            self._waddstr(
+                                win,
+                                row,
+                                1,
+                                _truncate_to_width(header, w - 2),
+                                _PAIR_CYAN,
+                                bold=True,
+                            )
                             row += 1
                             if row < end_row - 1:
-                                sub = f"  ⎿  Wrote {tc.line_count} lines to {_fname}"
-                                self._waddstr(win, row, 2, _truncate_to_width(sub, w - 3), _PAIR_DIM)
+                                sub = (
+                                    f"  ⎿  Wrote"
+                                    f" {tc.line_count}"
+                                    f" lines to {_fname}"
+                                )
+                                self._waddstr(
+                                    win,
+                                    row,
+                                    2,
+                                    _truncate_to_width(sub, w - 3),
+                                    _PAIR_DIM,
+                                )
                                 row += 1
                             # Content preview with line numbers
                             for li, line in enumerate(tc.content_lines[:6]):
@@ -719,75 +906,149 @@ class SplitPaneTUI:
                                     break
                                 num = f"{li + 1:>4} "
                                 self._waddstr(win, row, 3, num, _PAIR_DIM)
-                                self._waddstr(win, row, 3 + len(num),
-                                              _truncate_to_width(line, w - 4 - len(num)),
-                                              _PAIR_BOLD_WHITE)
+                                self._waddstr(
+                                    win,
+                                    row,
+                                    3 + len(num),
+                                    _truncate_to_width(line, w - 4 - len(num)),
+                                    _PAIR_BOLD_WHITE,
+                                )
                                 row += 1
-                            if tc.line_count > len(tc.content_lines) and row < end_row - 1:
+                            if (
+                                tc.line_count > len(tc.content_lines)
+                                and row < end_row - 1
+                            ):
                                 extra = tc.line_count - len(tc.content_lines)
-                                self._waddstr(win, row, 3, f"     … +{extra} more lines", _PAIR_DIM)
+                                self._waddstr(
+                                    win,
+                                    row,
+                                    3,
+                                    f"     … +{extra} more lines",
+                                    _PAIR_DIM,
+                                )
                                 row += 1
 
                         elif tc.name == "edit_file":
                             header = f"● Edit({_fname})"
-                            self._waddstr(win, row, 1, _truncate_to_width(header, w - 2), _PAIR_CYAN, bold=True)
+                            self._waddstr(
+                                win,
+                                row,
+                                1,
+                                _truncate_to_width(header, w - 2),
+                                _PAIR_CYAN,
+                                bold=True,
+                            )
                             row += 1
                             if tc.content_lines and row < end_row - 1:
                                 sub = f"  ⎿  Changed {tc.line_count} lines"
-                                self._waddstr(win, row, 2, _truncate_to_width(sub, w - 3), _PAIR_DIM)
+                                self._waddstr(
+                                    win,
+                                    row,
+                                    2,
+                                    _truncate_to_width(sub, w - 3),
+                                    _PAIR_DIM,
+                                )
                                 row += 1
                                 for line in tc.content_lines[:4]:
                                     if row >= end_row - 1:
                                         break
                                     display = f"     +{line}"
-                                    self._waddstr(win, row, 3,
-                                                  _truncate_to_width(display, w - 4),
-                                                  _PAIR_GREEN)
+                                    self._waddstr(
+                                        win,
+                                        row,
+                                        3,
+                                        _truncate_to_width(display, w - 4),
+                                        _PAIR_GREEN,
+                                    )
                                     row += 1
 
                         elif tc.name == "execute":
-                            cmd = tc.summary[2:] if tc.summary.startswith("$ ") else tc.summary
+                            cmd = (
+                                tc.summary[2:]
+                                if tc.summary.startswith("$ ")
+                                else tc.summary
+                            )
                             header = f"● Bash({_strip_ansi(cmd)})"
-                            self._waddstr(win, row, 1, _truncate_to_width(header, w - 2), _PAIR_CYAN, bold=True)
+                            self._waddstr(
+                                win,
+                                row,
+                                1,
+                                _truncate_to_width(header, w - 2),
+                                _PAIR_CYAN,
+                                bold=True,
+                            )
                             row += 1
                             if tc.result_preview and row < end_row - 1:
                                 clean_result = _strip_ansi(tc.result_preview)
-                                for rline in clean_result.split('\n')[:3]:
+                                for rline in clean_result.split("\n")[:3]:
                                     if row >= end_row - 1:
                                         break
-                                    self._waddstr(win, row, 3,
-                                                  _truncate_to_width(f"  ⎿  {rline.strip()}", w - 4),
-                                                  _PAIR_DIM)
+                                    self._waddstr(
+                                        win,
+                                        row,
+                                        3,
+                                        _truncate_to_width(
+                                            f"  ⎿  {rline.strip()}", w - 4
+                                        ),
+                                        _PAIR_DIM,
+                                    )
                                     row += 1
 
                         elif tc.name == "read_file":
                             header = f"● Read({_fname})"
-                            self._waddstr(win, row, 1, _truncate_to_width(header, w - 2), _PAIR_CYAN, bold=True)
+                            self._waddstr(
+                                win,
+                                row,
+                                1,
+                                _truncate_to_width(header, w - 2),
+                                _PAIR_CYAN,
+                                bold=True,
+                            )
                             row += 1
 
                         else:
                             # Generic tool
                             pair = _PAIR_RED if tc.is_error else _PAIR_CYAN
                             header = f"● {_strip_ansi(tc.summary)}"
-                            self._waddstr(win, row, 1, _truncate_to_width(header, w - 2), pair, bold=True)
+                            self._waddstr(
+                                win,
+                                row,
+                                1,
+                                _truncate_to_width(header, w - 2),
+                                pair,
+                                bold=True,
+                            )
                             row += 1
                             if tc.result_preview and row < end_row - 1:
-                                self._waddstr(win, row, 3,
-                                              _truncate_to_width(f"  ⎿  {_strip_ansi(tc.result_preview)[:80]}", w - 4),
-                                              _PAIR_DIM)
+                                self._waddstr(
+                                    win,
+                                    row,
+                                    3,
+                                    _truncate_to_width(
+                                        "  ⎿  "
+                                        + _strip_ansi(
+                                            tc.result_preview
+                                        )[:80],
+                                        w - 4,
+                                    ),
+                                    _PAIR_DIM,
+                                )
                                 row += 1
 
                 # AI text lines (when no tool history yet or between tools)
                 elif pane.recent_lines and row < end_row - 1:
                     content_rows = end_row - row - 1
-                    visible_lines = pane.recent_lines[-max(1, content_rows):]
+                    visible_lines = pane.recent_lines[-max(1, content_rows) :]
                     for line in visible_lines:
                         if row >= end_row - 1:
                             break
                         clean = _truncate_to_width(_strip_ansi(line), w - 3)
                         if clean.startswith("●") or clean.startswith("▸"):
                             self._waddstr(win, row, 2, clean, _PAIR_CYAN)
-                        elif clean.startswith("✗") or "error" in clean.lower()[:30]:
+                        elif (
+                            clean.startswith("✗")
+                            or "error" in clean.lower()[:30]
+                        ):
                             self._waddstr(win, row, 2, clean, _PAIR_RED)
                         else:
                             self._waddstr(win, row, 2, clean, _PAIR_BOLD_WHITE)
@@ -795,13 +1056,17 @@ class SplitPaneTUI:
 
                 # Separator between running panes (not after last)
                 if idx < n_running - 1 and end_row - 1 < height:
-                    self._waddstr(win, end_row - 1, 0, "┈" * (w - 1), _PAIR_DIM)
+                    self._waddstr(
+                        win, end_row - 1, 0, "┈" * (w - 1), _PAIR_DIM
+                    )
                     row = end_row
 
         win.noutrefresh()
 
     @staticmethod
-    def _waddstr(win, row: int, col: int, text: str, pair: int, bold: bool = False):
+    def _waddstr(
+        win, row: int, col: int, text: str, pair: int, bold: bool = False
+    ):
         """Safe addstr with color, CJK-aware width truncation.
 
         Args:

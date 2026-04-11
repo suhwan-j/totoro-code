@@ -8,7 +8,9 @@ from pydantic import BaseModel, Field
 
 
 class PermissionConfig(BaseModel):
-    mode: Literal["default", "auto_approve", "read_only", "plan_only"] = "default"
+    mode: Literal["default", "auto_approve", "read_only", "plan_only"] = (
+        "default"
+    )
     allow: list[str] = Field(default_factory=list)
     deny: list[str] = Field(default_factory=list)
 
@@ -37,7 +39,9 @@ class ContextConfig(BaseModel):
     auto_compact_threshold: float = 0.7
     reactive_compact_threshold: float = 0.85
     emergency_compact_threshold: float = 0.95
-    model_context_window: int | None = None  # None = auto-detect from model name
+    model_context_window: int | None = (
+        None  # None = auto-detect from model name
+    )
 
 
 class SandboxConfig(BaseModel):
@@ -49,7 +53,9 @@ class SandboxConfig(BaseModel):
 class AgentConfig(BaseModel):
     model: str = "claude-sonnet-4-5-20250929"
     fallback_model: str = "claude-haiku-4-5-20251001"
-    provider: Literal["auto", "openrouter", "anthropic", "openai", "vllm"] = "auto"
+    provider: Literal["auto", "openrouter", "anthropic", "openai", "vllm"] = (
+        "auto"
+    )
     project_root: str = "."
     permissions: PermissionConfig = Field(default_factory=PermissionConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)

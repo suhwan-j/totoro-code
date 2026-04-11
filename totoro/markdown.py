@@ -10,25 +10,33 @@ Supported elements:
     - Unordered (``-``, ``*``) and ordered (``1.``) lists
     - Horizontal rules (``---``, ``***``, ``___``)
 """
+
 import re
 
 from totoro.colors import (
-    RESET, BOLD, DIM,
-    BLUE, AMBER, AMBER_LT, IVORY, IVORY_DK, IVORY_LT,
+    RESET,
+    BOLD,
+    DIM,
+    BLUE,
+    AMBER,
+    AMBER_LT,
+    IVORY,
+    IVORY_DK,
+    IVORY_LT,
 )
 
 # AI response body text color (white/ivory)
 _TEXT = IVORY_LT
 
 # ─── Pre-compiled regex patterns ───
-_BOLD_RE = re.compile(r'\*\*(.+?)\*\*')
-_ITALIC_RE = re.compile(r'(?<!\*)\*([^*]+?)\*(?!\*)')
-_INLINE_CODE_RE = re.compile(r'`([^`]+?)`')
-_HEADING_RE = re.compile(r'^(#{1,3}) (.+)$')
-_ULIST_RE = re.compile(r'^(\s*)[-*] (.+)$')
-_OLIST_RE = re.compile(r'^(\s*)(\d+)\. (.+)$')
-_HR_RE = re.compile(r'^(---+|\*\*\*+|___+)\s*$')
-_FENCE_RE = re.compile(r'^```')
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+_ITALIC_RE = re.compile(r"(?<!\*)\*([^*]+?)\*(?!\*)")
+_INLINE_CODE_RE = re.compile(r"`([^`]+?)`")
+_HEADING_RE = re.compile(r"^(#{1,3}) (.+)$")
+_ULIST_RE = re.compile(r"^(\s*)[-*] (.+)$")
+_OLIST_RE = re.compile(r"^(\s*)(\d+)\. (.+)$")
+_HR_RE = re.compile(r"^(---+|\*\*\*+|___+)\s*$")
+_FENCE_RE = re.compile(r"^```")
 
 
 def render(text: str) -> str:
@@ -48,7 +56,7 @@ def render(text: str) -> str:
         >>> render("## Title\\n- **bold** item")
         '\\n\\033[1mTitle\\033[0m\\n...'
     """
-    lines = text.split('\n')
+    lines = text.split("\n")
     out = []
     in_code = False
 
@@ -60,7 +68,9 @@ def render(text: str) -> str:
                 # Opening fence — show language hint if present
                 lang = line.rstrip()[3:].strip()
                 label = f" {lang} " if lang else ""
-                out.append(f"{DIM}┌{label}{'─' * max(0, 50 - len(label))}{RESET}")
+                out.append(
+                    f"{DIM}┌{label}{'─' * max(0, 50 - len(label))}{RESET}"
+                )
             else:
                 out.append(f"{DIM}└{'─' * 50}{RESET}")
             continue
@@ -92,20 +102,24 @@ def render(text: str) -> str:
         m = _ULIST_RE.match(line)
         if m:
             indent, content = m.group(1), m.group(2)
-            out.append(f"{indent}{DIM}•{RESET} {_TEXT}{_inline(content)}{RESET}")
+            out.append(
+                f"{indent}{DIM}•{RESET} {_TEXT}{_inline(content)}{RESET}"
+            )
             continue
 
         # Ordered list
         m = _OLIST_RE.match(line)
         if m:
             indent, num, content = m.group(1), m.group(2), m.group(3)
-            out.append(f"{indent}{DIM}{num}.{RESET} {_TEXT}{_inline(content)}{RESET}")
+            out.append(
+                f"{indent}{DIM}{num}.{RESET} {_TEXT}{_inline(content)}{RESET}"
+            )
             continue
 
         # Regular line — apply inline formatting
         out.append(f"{_TEXT}{_inline(line)}{RESET}")
 
-    return '\n'.join(out)
+    return "\n".join(out)
 
 
 def _inline(text: str) -> str:
@@ -121,9 +135,9 @@ def _inline(text: str) -> str:
         Line with ANSI escape codes for inline formatting applied.
     """
     # Bold: **text**
-    text = _BOLD_RE.sub(f'{BOLD}\\1{RESET}{_TEXT}', text)
+    text = _BOLD_RE.sub(f"{BOLD}\\1{RESET}{_TEXT}", text)
     # Inline code: `text`
-    text = _INLINE_CODE_RE.sub(f'{AMBER}\\1{RESET}{_TEXT}', text)
+    text = _INLINE_CODE_RE.sub(f"{AMBER}\\1{RESET}{_TEXT}", text)
     # Italic: *text* (but not inside bold)
-    text = _ITALIC_RE.sub(f'{IVORY}\\1{RESET}{_TEXT}', text)
+    text = _ITALIC_RE.sub(f"{IVORY}\\1{RESET}{_TEXT}", text)
     return text

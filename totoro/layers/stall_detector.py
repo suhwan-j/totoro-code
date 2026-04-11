@@ -1,4 +1,5 @@
 """Stall detection — detect when agent is stuck in empty turns."""
+
 from typing import Any
 
 from langgraph.types import interrupt
@@ -28,7 +29,9 @@ class StallDetector:
         Returns:
             A recovery action dict, or None if no stall detected.
         """
-        has_tool_calls = hasattr(last_message, "tool_calls") and last_message.tool_calls
+        has_tool_calls = (
+            hasattr(last_message, "tool_calls") and last_message.tool_calls
+        )
 
         if has_tool_calls:
             self._consecutive_empty = 0
@@ -46,10 +49,14 @@ class StallDetector:
             self._consecutive_empty = 0
             return {
                 "action": "inject_message",
-                "message": HumanMessage(content=(
-                    "[System] No progress detected. "
-                    "Try a different approach, or use ask_user if you need guidance."
-                )),
+                "message": HumanMessage(
+                    content=(
+                        "[System] No progress detected. "
+                        "Try a different approach, or"
+                        " use ask_user if you need"
+                        " guidance."
+                    )
+                ),
             }
         elif self._recovery_stage == 2:
             self._consecutive_empty = 0
@@ -58,7 +65,13 @@ class StallDetector:
             self._consecutive_empty = 0
             return {"action": "ask_user"}
         else:
-            return {"action": "stop", "message": "Agent stopped after multiple stall recovery attempts."}
+            return {
+                "action": "stop",
+                "message": (
+                    "Agent stopped after multiple"
+                    " stall recovery attempts."
+                ),
+            }
 
     def reset(self):
         self._consecutive_empty = 0
@@ -90,7 +103,11 @@ class StallDetectorMiddleware(AgentMiddleware):
         Returns:
             Dict with recovery messages, or None if no stall detected.
         """
-        messages = state.get("messages", []) if isinstance(state, dict) else getattr(state, "messages", [])
+        messages = (
+            state.get("messages", [])
+            if isinstance(state, dict)
+            else getattr(state, "messages", [])
+        )
         if not messages:
             return None
         last_msg = messages[-1]
@@ -102,6 +119,12 @@ class StallDetectorMiddleware(AgentMiddleware):
         if action == "inject_message":
             return {"messages": [recovery["message"]]}
         if action == "stop":
-            return {"messages": [HumanMessage(content=recovery.get("message", "Agent stopped."))]}
+            return {
+                "messages": [
+                    HumanMessage(
+                        content=recovery.get("message", "Agent stopped.")
+                    )
+                ]
+            }
         # switch_model and ask_user are handled at CLI level
         return None

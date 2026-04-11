@@ -15,6 +15,7 @@ def web_search_tool(query: str, max_results: int = 5) -> str:
         return "Web search unavailable: TAVILY_API_KEY not set."
 
     from tavily import TavilyClient
+
     client = TavilyClient(api_key=api_key)
     response = client.search(query, max_results=max_results)
 

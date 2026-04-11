@@ -462,7 +462,9 @@ subagents=[
 │    ├── 독립된 Agentic Loop 내에서 도구 호출               │
 │    ├── 메인 에이전트 컨텍스트와 격리                      │
 │    ├── 진행 상황은 메인에 스트리밍                        │
-│    └── 타임아웃/최대 턴 제한 적용                         │
+│    ├── 타임아웃/최대 턴 제한 적용                         │
+│    ├── tatsuo는 worker 완료 후 순차 실행                  │
+│    └── 절대 타임아웃: 10분/서브에이전트                   │
 │    │                                                    │
 │  [보고] 결과 반환                                        │
 │    │                                                    │
@@ -474,32 +476,58 @@ subagents=[
 └─────────────────────────────────────────────────────────┘
 ```
 
-### 9.4 서브에이전트 HITL 전파
+### 9.4 서브에이전트 HITL (SubagentHITLMiddleware)
 
-서브에이전트가 사용자 승인이 필요한 상황(interrupt_on 매칭)에 처했을 때,
-interrupt를 메인 에이전트를 거쳐 사용자에게 전파한다.
+서브에이전트는 `multiprocessing` 별도 프로세스에서 실행되므로 LangGraph의 `interrupt()`를
+직접 사용할 수 없다. 대신 `SubagentHITLMiddleware` (`totoro/layers/subagent_hitl.py`)가
+IPC 큐를 통해 부모 프로세스와 통신한다:
 
 ```
-서브에이전트 내부에서 interrupt 발생 (interrupt_on 매칭)
+서브에이전트 프로세스 (child)              부모 프로세스 (TUI)
+─────────────────────────               ────────────────────
+SubagentHITLMiddleware
+  .after_model() 호출
     │
-    ▼
-[1] 서브에이전트 실행 중단, interrupt 정보 저장
-    {
-      "type": "permission_request",
-      "tool": "bash",
-      "input": "npm run deploy",
-      "context": "Subagent 'coder' requests permission to run: bash(npm run deploy)"
-    }
+    ├── allow_patterns 매칭 → 자동 승인
     │
-    ▼
-[2] 메인 에이전트 레벨에서 사용자에게 전파
-    "[Subagent: coder] bash(npm run deploy) — approve? (y/n)"
+    ├── event_queue.put(hitl_request)  ──→  TUI가 hitl_request 수신
+    │                                       curses 일시 해제
+    │                                       (a)pprove / (A)pprove all
+    │                                       / (r)eject / (e)dit
+    │                                       response_queue.put(decisions)
+    ├── response_queue.get(timeout=300)  ←──┘
     │
-    ▼
-[3] 사용자 응답 → Command(resume={"decisions": [...]})
-    ├── approve → Command(resume={"decisions": [{"type": "approve"}]})
-    ├── reject  → Command(resume={"decisions": [{"type": "reject"}]})
-    └── edit    → Command(resume={"decisions": [{"type": "edit", "edited_action": {"name": "tool_name", "args": {...}}}]})
+    ├── approve → 도구 실행 계속
+    ├── approve_all → _auto_approve=True (세션 전체 글로벌)
+    ├── reject → ToolMessage(status="error") 반환
+    └── edit → 수정된 args로 도구 실행
+```
+
+**글로벌 Auto-Approve**: "Approve All"(A) 선택 시 `_runtime_auto_approve` 모듈 레벨 플래그가
+설정되어 `_run_parallel()` 호출 간에 유지된다. 새 TUI 인스턴스에도 전파되므로
+검증→수정→재검증 루프에서도 자동 승인이 지속된다.
+
+**배치 처리**: 부모 TUI는 curses를 한 번 해제하고, 대기 중인 모든 HITL 요청을 일괄 처리한 후
+curses를 복원한다.
+
+### 9.5 Tatsuo 검증 순서 및 자동 재시도
+
+tatsuo(리뷰어)는 worker 에이전트와 병렬 실행되지 않고, worker 완료 후 순차 실행된다:
+
+```
+[Phase 1] worker 에이전트 병렬 실행 (satsuki, mei, susuwatari)
+    │
+    ▼ (모든 worker 완료)
+[Phase 2] tatsuo 순차 실행 (테스트/리뷰/검증)
+    │
+    ├── 성공 → 결과 반환
+    └── 실패 감지 (tatsuo 출력에서 실패 키워드 매칭)
+        │
+        ▼
+[Phase 3] satsuki에게 수정 위임
+[Phase 4] tatsuo 재검증
+        │
+        └── 최대 3회 반복 (fail→fix→verify 루프)
 ```
 
 ---
@@ -532,23 +560,23 @@ agent = create_deep_agent(
 LLM이 interrupt_on 대상 도구 호출
     │
     ▼
-[1] HumanInTheLoopMiddleware가 실행을 중단 (interrupt)
+[1] HumanInTheLoopMiddleware(메인) 또는 SubagentHITLMiddleware(서브)가 실행을 중단
 [2] TUI가 사용자에게 표시:
-    "bash(npm install express) — approve / edit / reject?"
+    "bash(npm install express) — (a)pprove / (A)pprove all / (r)eject / (e)dit?"
     │
     ▼
-[3] 사용자 결정 → Command(resume) 전송
+[3] 사용자 결정 → 결정 전달
     │
-    ├── approve:
-    │   Command(resume={"decisions": [{"type": "approve"}]})
+    ├── approve (a):
     │   → 도구 원래 입력 그대로 실행
     │
-    ├── edit:
-    │   Command(resume={"decisions": [{"type": "edit", "edited_action": {"name": "tool_name", "args": {...}}}]})
+    ├── approve all (A):
+    │   → 현재 도구 실행 + 이후 모든 서브에이전트 도구 자동 승인 (세션 전체 글로벌)
+    │
+    ├── edit (e):
     │   → 수정된 입력으로 도구 실행
     │
-    └── reject:
-        Command(resume={"decisions": [{"type": "reject"}]})
+    └── reject (r):
         → 도구 실행 거부, LLM에게 거부 사실 전달 (LLM이 대안 모색)
 ```
 
@@ -562,6 +590,8 @@ LLM이 interrupt_on 대상 도구 호출
 | **plan_only** | 읽기 + 계획 도구만 허용 | 계획 수립 단계 |
 
 ### 권한 규칙 설정
+
+#### 메인 에이전트 권한 (glob 패턴)
 
 ```json
 // .totoro/settings.json
@@ -584,6 +614,28 @@ LLM이 interrupt_on 대상 도구 호출
     ]
   }
 }
+```
+
+#### 서브에이전트 권한 (SubagentHITLMiddleware allow patterns)
+
+서브에이전트에서는 `_matches_allow()` 함수가 간결한 패턴 매칭을 수행한다:
+
+```json
+// .totoro/settings.json
+{
+  "permissions": {
+    "allow": ["mkdir", "npm", "write_file", "*.py", "*"]
+  }
+}
+```
+
+| 패턴 | 매칭 대상 |
+|------|----------|
+| `"*"` | 모든 도구 (사실상 auto-approve) |
+| `"write_file"` | write_file 도구명 직접 매칭 |
+| `"mkdir"` | execute 명령어 첫 단어가 "mkdir"인 경우 |
+| `"npm *"` | execute 명령어가 "npm "으로 시작하는 경우 |
+| `"*.py"` | write_file/edit_file 대상 파일이 .py인 경우 |
 ```
 
 ```
@@ -766,9 +818,38 @@ DeepAgents의 MemoryMiddleware 위에 TOTORO-CODE가 추가하는 자동 추출 
 
 ---
 
-## 12. Agentic Loop 방어 설계
+## 12. API 타임아웃 & 에러 처리
 
-### 12.1 핵심 루프 구조
+메인 에이전트 스트림은 데몬 스레드에서 실행되며 타임아웃을 감지한다:
+
+| 타임아웃 | 값 | 설명 |
+|----------|-----|------|
+| 첫 이벤트 (메인) | 3분 | 첫 스트리밍 이벤트가 도착하지 않으면 타임아웃 |
+| 첫 이벤트 (서브에이전트) | 5분 | 서브에이전트는 초기화 시간이 더 필요 |
+| 절대 타임아웃 | 10분/서브에이전트 | 서브에이전트당 최대 실행 시간 |
+
+에러 분류 및 처리:
+
+| 에러 유형 | 처리 |
+|----------|------|
+| Rate Limit | 대기 후 재시도 |
+| Auth | API 키 재확인 |
+| Network | 재연결 시도 |
+| Timeout | 안전하게 중단 |
+
+Ctrl+C 처리: `"[Interrupted] Stopped by user"` 메시지로 안전하게 종료.
+
+### 도구 호출 매칭 (FIFO 큐)
+
+동시 tool_start/tool_end 이벤트를 올바르게 매칭하기 위해 단일 `_pending_tool_args` 대신
+`_pending_tool_queue` (FIFO)를 사용한다. 이름 기반으로 매칭하여 병렬 도구 호출 시
+이벤트 순서 혼동을 방지한다.
+
+---
+
+## 13. Agentic Loop 방어 설계
+
+### 13.1 핵심 루프 구조
 
 ```
 사용자 입력
@@ -789,7 +870,7 @@ DeepAgents의 MemoryMiddleware 위에 TOTORO-CODE가 추가하는 자동 추출 
 └────────────────────────────────────────────┘
 ```
 
-### 12.2 방어 계층
+### 13.2 방어 계층
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -826,7 +907,7 @@ DeepAgents의 MemoryMiddleware 위에 TOTORO-CODE가 추가하는 자동 추출 
 └─────────────────────────────────────────────────────┘
 ```
 
-### 12.3 Stall Detection — TOTORO-CODE 커스텀 레이어
+### 13.3 Stall Detection — TOTORO-CODE 커스텀 레이어
 
 DeepAgents 기본 루프 위에 TOTORO-CODE가 추가하는 멈춤 감지/복구 레이어.
 
@@ -853,7 +934,7 @@ Stall Detection Pipeline:
     안전하게 멈추고 진행 상황 보고
 ```
 
-### 12.4 멀티 모델 환경 고려사항
+### 13.4 멀티 모델 환경 고려사항
 
 ```
 모델 전환 시 주의사항:
@@ -869,9 +950,9 @@ Stall Detection Pipeline:
 
 ---
 
-## 13. 컨텍스트 관리
+## 14. 컨텍스트 관리
 
-### 13.1 컨텍스트 윈도우 전략
+### 14.1 컨텍스트 윈도우 전략
 
 ```
 컨텍스트 사용량 모니터링
@@ -883,7 +964,7 @@ Stall Detection Pipeline:
     └── > 95% : Emergency Compact (최소 컨텍스트만 유지)
 ```
 
-### 13.2 Auto-Compact 동작
+### 14.2 Auto-Compact 동작
 
 ```
 [1] 오래된 도구 실행 결과를 요약으로 교체
@@ -894,7 +975,7 @@ Stall Detection Pipeline:
 
 ---
 
-## 14. 스킬 시스템
+## 15. 스킬 시스템
 
 ### DeepAgents 스킬 API
 
@@ -908,7 +989,7 @@ agent = create_deep_agent(
 )
 ```
 
-### 14.1 스킬 발견 순서
+### 15.1 스킬 발견 순서
 
 ```
 [1] 내장 스킬    → built-in/skills/
@@ -916,7 +997,7 @@ agent = create_deep_agent(
 [3] 프로젝트 스킬 → .totoro/skills/
 ```
 
-### 14.2 SKILL.md 형식
+### 15.2 SKILL.md 형식
 
 ```markdown
 ---
@@ -936,7 +1017,7 @@ Step-by-step guide for the agent to follow.
 Good/bad usage examples.
 ```
 
-### 14.3 스킬 호출 흐름
+### 15.3 스킬 호출 흐름
 
 ```
 사용자: "/my-skill arg1 arg2" 또는 LLM이 자동 판단
@@ -955,7 +1036,7 @@ SkillsMiddleware → 스킬 발견 → SKILL.md 로드 (on-demand)
 
 ---
 
-## 15. 슬래시 커맨드
+## 16. 슬래시 커맨드
 
 TOTORO-CODE TUI에서 제공하는 클라이언트 사이드 커맨드.
 
@@ -977,9 +1058,9 @@ TOTORO-CODE TUI에서 제공하는 클라이언트 사이드 커맨드.
 
 ---
 
-## 16. 설정 체계
+## 17. 설정 체계
 
-### 16.1 설정 우선순위
+### 17.1 설정 우선순위
 
 ```
 [1] CLI 인수              (최우선)
@@ -989,7 +1070,7 @@ TOTORO-CODE TUI에서 제공하는 클라이언트 사이드 커맨드.
 [5] 기본값                (최하위)
 ```
 
-### 16.2 주요 설정
+### 17.2 주요 설정
 
 ```json
 {
@@ -1040,7 +1121,7 @@ TOTORO-CODE TUI에서 제공하는 클라이언트 사이드 커맨드.
 
 ---
 
-## 17. 세션 복원
+## 18. 세션 복원
 
 세션 복원(/resume) 시 서브에이전트 상태 처리 — TOTORO-CODE가 관리하는 복원 로직.
 
@@ -1074,7 +1155,7 @@ Checkpointer에서 AgentState 로드
 
 ---
 
-## 18. 핵심 설계 패턴 (구현 시 준수)
+## 19. 핵심 설계 패턴 (구현 시 준수)
 
 ### 패턴 1: Framework-First
 DeepAgents `create_deep_agent()`가 제공하는 미들웨어, 도구, 서브에이전트 시스템을 그대로 사용한다.

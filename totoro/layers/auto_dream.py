@@ -1,4 +1,6 @@
-"""Auto-Dream memory extraction — persistent long-term memories from conversations.
+"""Auto-Dream memory extraction.
+
+Persistent long-term memories from conversations.
 
 Architecture:
   - Extraction rules defined in built-in/skills/remember/SKILL.md
@@ -7,6 +9,7 @@ Architecture:
   - Memory injection into system prompt via before_model hook
   - Survives process restarts and model switches
 """
+
 import json
 import logging
 import re
@@ -22,16 +25,21 @@ logger = logging.getLogger(__name__)
 
 # ─── Skill-based prompt loading ───
 
+
 def _load_skill_rules() -> str:
     """Load extraction rules from remember/SKILL.md.
 
-    Search order: project .totoro/skills/ → global ~/.totoro/skills/ → built-in.
+    Search order: project → global → built-in.
     Returns the SKILL.md body (after frontmatter), or a hardcoded fallback.
     """
     candidates = [
         Path.cwd() / ".totoro" / "skills" / "remember" / "SKILL.md",
         Path.home() / ".totoro" / "skills" / "remember" / "SKILL.md",
-        Path(__file__).resolve().parent.parent.parent / "built-in" / "skills" / "remember" / "SKILL.md",
+        Path(__file__).resolve().parent.parent.parent
+        / "built-in"
+        / "skills"
+        / "remember"
+        / "SKILL.md",
     ]
     for path in candidates:
         if path.exists():
@@ -41,7 +49,7 @@ def _load_skill_rules() -> str:
                 if text.startswith("---"):
                     end = text.find("---", 3)
                     if end > 0:
-                        body = text[end + 3:].strip()
+                        body = text[end + 3 :].strip()
                         if body:
                             logger.debug(f"Loaded remember skill from {path}")
                             return body
@@ -130,7 +138,8 @@ class CharacterFile:
         """Initialize the character file store.
 
         Args:
-            path: Path to the character.md file. Defaults to ~/.totoro/character.md.
+            path: Path to character.md.
+                Defaults to ~/.totoro/character.md.
         """
         if path is None:
             base = Path.home() / ".totoro"
@@ -163,7 +172,9 @@ class CharacterFile:
         result = []
         for mtype, entries in data.items():
             for name, content in entries.items():
-                result.append({"type": mtype, "name": name, "content": content})
+                result.append(
+                    {"type": mtype, "name": name, "content": content}
+                )
         return result
 
     def get_by_type(self, memory_type: str) -> list[dict]:
@@ -178,7 +189,10 @@ class CharacterFile:
         with self._lock:
             data = self._read()
         entries = data.get(memory_type, {})
-        return [{"type": memory_type, "name": k, "content": v} for k, v in entries.items()]
+        return [
+            {"type": memory_type, "name": k, "content": v}
+            for k, v in entries.items()
+        ]
 
     def count(self) -> int:
         with self._lock:
@@ -256,7 +270,9 @@ class CharacterFile:
             # Section header: ## User Profile
             if line.startswith("## "):
                 title = line[3:].strip()
-                current_type = _SECTION_TO_TYPE.get(title, title.lower().replace(" ", "_"))
+                current_type = _SECTION_TO_TYPE.get(
+                    title, title.lower().replace(" ", "_")
+                )
                 data.setdefault(current_type, {})
                 continue
 
@@ -272,7 +288,14 @@ class CharacterFile:
         """Write data to character.md."""
         lines = [f"# Character — Auto-Dream Memory", ""]
 
-        for mtype in ("user", "preferred", "avoided", "domain", "feedback", "project"):
+        for mtype in (
+            "user",
+            "preferred",
+            "avoided",
+            "domain",
+            "feedback",
+            "project",
+        ):
             entries = data.get(mtype, {})
             if not entries:
                 continue
@@ -296,6 +319,7 @@ class CharacterFile:
 
 # ─── Extractor ───
 
+
 class AutoDreamExtractor:
     """Extracts long-term memories from conversations using a lightweight LLM.
 
@@ -304,7 +328,9 @@ class AutoDreamExtractor:
     - Injected: memories are prepended to system prompt via before_model
     """
 
-    def __init__(self, model=None, config=None, store: CharacterFile | None = None):
+    def __init__(
+        self, model=None, config=None, store: CharacterFile | None = None
+    ):
         """Initialize the Auto-Dream memory extractor.
 
         Args:
@@ -320,7 +346,9 @@ class AutoDreamExtractor:
         self._turn_count = 0
         self._extract_lock = threading.Lock()  # prevent concurrent extractions
         self._cached_memories: list[dict] | None = None  # invalidated on write
-        self._pending_user_message: str | None = None  # set by on_turn, consumed by after_model
+        self._pending_user_message: str | None = (
+            None  # set by on_turn, consumed by after_model
+        )
 
         # Thresholds from config
         if config and hasattr(config, "memory"):
@@ -333,7 +361,9 @@ class AutoDreamExtractor:
         # Turn-based threshold: extract every N user turns regardless of tokens
         self._turn_threshold = 3
 
-    def should_extract(self, current_token_count: int, tool_count: int) -> bool:
+    def should_extract(
+        self, current_token_count: int, tool_count: int
+    ) -> bool:
         """Check if extraction thresholds are met.
 
         Args:
@@ -370,6 +400,7 @@ class AutoDreamExtractor:
             existing_text = self._format_existing_memories()
 
             from langchain_core.messages import HumanMessage
+
             prompt = CONVERSATION_EXTRACT_PROMPT.format(
                 skill_rules=_get_skill_rules(),
                 existing_memories=existing_text,
@@ -405,17 +436,22 @@ class AutoDreamExtractor:
         """
         self._turn_count += 1
         # Save for deferred analysis in after_model
-        if user_message and len(user_message.strip()) >= 5 and not user_message.strip().startswith("/"):
+        if (
+            user_message
+            and len(user_message.strip()) >= 5
+            and not user_message.strip().startswith("/")
+        ):
             self._pending_user_message = user_message
         else:
             self._pending_user_message = None
 
     def _analyze_user_message_deferred(self, user_message: str) -> None:
-        """Run user message analysis in background thread (called from after_model).
+        """Run user message analysis in background.
 
         Args:
             user_message: The user message text to analyze.
         """
+
         def _bg():
             try:
                 self._analyze_user_message(user_message)
@@ -426,7 +462,7 @@ class AutoDreamExtractor:
         thread.start()
 
     def _analyze_user_message(self, user_message: str) -> list[dict]:
-        """Analyze a single user message for personal facts using lightweight LLM.
+        """Analyze user message for personal facts.
 
         Args:
             user_message: The user message text to analyze.
@@ -437,13 +473,18 @@ class AutoDreamExtractor:
         existing_text = self._format_existing_memories()
 
         from langchain_core.messages import HumanMessage
+
         prompt = USER_INTENT_PROMPT.format(
             skill_rules=_get_skill_rules(),
             existing_memories=existing_text,
             user_message=user_message,
         )
         response = self._model.invoke([HumanMessage(content=prompt)])
-        raw = response.content if isinstance(response.content, str) else str(response.content)
+        raw = (
+            response.content
+            if isinstance(response.content, str)
+            else str(response.content)
+        )
         entries = _parse_json_response(raw)
 
         if not entries and raw.strip():
@@ -454,11 +495,15 @@ class AutoDreamExtractor:
 
         if entries:
             self._cached_memories = None  # invalidate cache
-            logger.info(f"Auto-Dream: extracted {len(entries)} facts from user message")
+            logger.info(
+                f"Auto-Dream: extracted {len(entries)} facts from user message"
+            )
 
         return entries
 
-    def maybe_extract_async(self, messages: list, current_token_count: int, tool_count: int) -> None:
+    def maybe_extract_async(
+        self, messages: list, current_token_count: int, tool_count: int
+    ) -> None:
         """Check thresholds and extract in background thread if needed.
 
         Args:
@@ -563,7 +608,9 @@ class AutoDreamExtractor:
 
         # Calculate per-type budget if we need to trim
         # Max total entries for injection (keep system prompt reasonable)
-        max_inject_total = 60  # ~60 entries ≈ 3000 tokens, reasonable for system prompt
+        max_inject_total = (
+            60  # ~60 entries ≈ 3000 tokens, reasonable for system prompt
+        )
         if max_per_type is None:
             num_types = max(len(by_type), 1)
             total_entries = sum(len(v) for v in by_type.values())
@@ -598,7 +645,11 @@ class AutoDreamExtractor:
             return "(none)"
         lines = []
         for m in memories[-20:]:
-            lines.append(f"- [{m.get('type', '?')}] {m.get('name', '?')}: {m.get('content', '')[:200]}")
+            lines.append(
+                f"- [{m.get('type', '?')}]"
+                f" {m.get('name', '?')}:"
+                f" {m.get('content', '')[:200]}"
+            )
         return "\n".join(lines)
 
     def format_memories_display(self) -> str:
@@ -607,13 +658,20 @@ class AutoDreamExtractor:
         if not memories:
             return "No memories stored."
         from totoro.colors import BOLD, RESET, DIM
+
         lines = [f"{BOLD}Stored Memories ({len(memories)}):{RESET}"]
         for i, m in enumerate(memories, 1):
             mtype = m.get("type", "unknown")
             name = m.get("name", "unnamed")
             content = m.get("content", "")[:100]
-            lines.append(f"  {i}. {DIM}[{mtype}]{RESET} {BOLD}{name}{RESET}: {content}")
-        lines.append(f"\n  {DIM}Commands: /memory remove <#> · /memory clean · /memory clear{RESET}")
+            lines.append(
+                f"  {i}. {DIM}[{mtype}]{RESET} {BOLD}{name}{RESET}: {content}"
+            )
+        lines.append(
+            f"\n  {DIM}Commands: /memory remove <#>"
+            f" · /memory clean"
+            f" · /memory clear{RESET}"
+        )
         lines.append(f"  {DIM}Stored at: {self._store._path}{RESET}")
         return "\n".join(lines)
 
@@ -634,6 +692,7 @@ class AutoDreamExtractor:
 
 
 # ─── Middleware ───
+
 
 class AutoDreamMiddleware(AgentMiddleware):
     """Middleware that:
@@ -660,7 +719,7 @@ class AutoDreamMiddleware(AgentMiddleware):
     def after_model(self, state, runtime) -> dict[str, Any] | None:
         """Trigger async memory extraction after main model responds.
 
-        1. Analyze pending user message for personal facts (deferred from on_turn)
+        1. Analyze pending user message for facts
         2. Check thresholds for full conversation extraction
         Both run async in background threads -- no blocking.
 
@@ -671,7 +730,11 @@ class AutoDreamMiddleware(AgentMiddleware):
         Returns:
             Always None (extraction is async and does not modify state).
         """
-        messages = state.get("messages", []) if isinstance(state, dict) else getattr(state, "messages", [])
+        messages = (
+            state.get("messages", [])
+            if isinstance(state, dict)
+            else getattr(state, "messages", [])
+        )
 
         # 1. Deferred user message analysis (set by on_turn, consumed here)
         pending = self._extractor._pending_user_message
@@ -681,6 +744,7 @@ class AutoDreamMiddleware(AgentMiddleware):
 
         # 2. Threshold-based full conversation extraction
         from totoro.layers._token_utils import estimate_tokens
+
         token_count = estimate_tokens(messages)
         tool_count = sum(1 for m in messages if hasattr(m, "tool_call_id"))
         self._extractor.maybe_extract_async(messages, token_count, tool_count)

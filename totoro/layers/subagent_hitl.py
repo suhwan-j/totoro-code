@@ -14,7 +14,9 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, ToolMessage
 
 
-def _matches_allow(tool_name: str, tool_args: dict, patterns: list[str]) -> bool:
+def _matches_allow(
+    tool_name: str, tool_args: dict, patterns: list[str]
+) -> bool:
     """Check if a tool call matches any allow pattern.
 
     Patterns:
@@ -45,6 +47,7 @@ def _matches_allow(tool_name: str, tool_args: dict, patterns: list[str]) -> bool
             if fnmatch.fnmatch(fpath, pat):
                 return True
             import os
+
             if fnmatch.fnmatch(os.path.basename(fpath), pat):
                 return True
     return False
@@ -115,23 +118,28 @@ class SubagentHITLMiddleware(AgentMiddleware):
                     display_args[k] = v[:500] + "..."
                 else:
                     display_args[k] = v
-            tool_requests.append({
-                "name": tc["name"],
-                "args": display_args,
-                "full_args": tc["args"],
-                "id": tc.get("id", ""),
-            })
+            tool_requests.append(
+                {
+                    "name": tc["name"],
+                    "args": display_args,
+                    "full_args": tc["args"],
+                    "id": tc.get("id", ""),
+                }
+            )
 
         from totoro.pane import SubagentEvent
+
         try:
-            self.event_queue.put_nowait(SubagentEvent(
-                label=self.label,
-                event_type="hitl_request",
-                data={
-                    "request_id": request_id,
-                    "tool_requests": tool_requests,
-                },
-            ))
+            self.event_queue.put_nowait(
+                SubagentEvent(
+                    label=self.label,
+                    event_type="hitl_request",
+                    data={
+                        "request_id": request_id,
+                        "tool_requests": tool_requests,
+                    },
+                )
+            )
         except Exception:
             # Queue full — auto-approve to avoid deadlock
             return None
@@ -141,8 +149,11 @@ class SubagentHITLMiddleware(AgentMiddleware):
             response = self.response_queue.get(timeout=300)
         except queue.Empty:
             # Timeout — reject all
-            return self._reject_all(last_ai_msg, needs_approval,
-                                    "HITL timeout: tool execution rejected")
+            return self._reject_all(
+                last_ai_msg,
+                needs_approval,
+                "HITL timeout: tool execution rejected",
+            )
 
         decisions = response.get("decisions", [])
 
@@ -167,20 +178,26 @@ class SubagentHITLMiddleware(AgentMiddleware):
                     revised_tool_calls.append(tc)
                 elif dtype == "edit":
                     edited = decision.get("edited_action", {})
-                    revised_tool_calls.append({
-                        "name": edited.get("name", tc["name"]),
-                        "args": edited.get("args", tc["args"]),
-                        "id": tc.get("id"),
-                        "type": "tool_call",
-                    })
+                    revised_tool_calls.append(
+                        {
+                            "name": edited.get("name", tc["name"]),
+                            "args": edited.get("args", tc["args"]),
+                            "id": tc.get("id"),
+                            "type": "tool_call",
+                        }
+                    )
                 elif dtype == "reject":
-                    msg = decision.get("message", f"User rejected {tc['name']}")
-                    artificial_messages.append(ToolMessage(
-                        content=msg,
-                        name=tc["name"],
-                        tool_call_id=tc.get("id", ""),
-                        status="error",
-                    ))
+                    msg = decision.get(
+                        "message", f"User rejected {tc['name']}"
+                    )
+                    artificial_messages.append(
+                        ToolMessage(
+                            content=msg,
+                            name=tc["name"],
+                            tool_call_id=tc.get("id", ""),
+                            status="error",
+                        )
+                    )
             else:
                 # Not intercepted — keep as-is
                 revised_tool_calls.append(tc)
@@ -195,12 +212,14 @@ class SubagentHITLMiddleware(AgentMiddleware):
         rejected_indices = {idx for idx, _ in needs_approval}
         for idx, tc in enumerate(ai_msg.tool_calls):
             if idx in rejected_indices:
-                artificial.append(ToolMessage(
-                    content=reason,
-                    name=tc["name"],
-                    tool_call_id=tc.get("id", ""),
-                    status="error",
-                ))
+                artificial.append(
+                    ToolMessage(
+                        content=reason,
+                        name=tc["name"],
+                        tool_call_id=tc.get("id", ""),
+                        status="error",
+                    )
+                )
             else:
                 kept.append(tc)
         ai_msg.tool_calls = kept

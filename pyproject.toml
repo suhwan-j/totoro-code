@@ -28,3 +28,9 @@ include = ["totoro*"]
 [build-system]
 requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 79
+
+[tool.ruff.lint]
+select = ["E", "W", "F"]

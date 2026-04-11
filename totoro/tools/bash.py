@@ -22,7 +22,12 @@ def bash_tool(command: str, timeout: int = 120) -> str:
         )
         output = result.stdout + result.stderr
         if len(output) > 50000:
-            output = output[:50000] + f"\n... (truncated, {len(result.stdout) + len(result.stderr)} total chars)"
+            output = (
+                output[:50000]
+                + "\n... (truncated,"
+                f" {len(result.stdout) + len(result.stderr)}"
+                " total chars)"
+            )
         return output.strip() or "(no output)"
     except subprocess.TimeoutExpired:
         return f"Command timed out after {timeout}s"

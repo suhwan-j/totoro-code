@@ -5,8 +5,10 @@ from pathlib import Path
 from totoro.config.schema import AgentConfig
 
 
-def load_config(cli_overrides: dict | None = None, project_root: str | None = None) -> AgentConfig:
-    """Load configuration with 5-level priority: CLI > env > project > user > defaults.
+def load_config(
+    cli_overrides: dict | None = None, project_root: str | None = None
+) -> AgentConfig:
+    """Load configuration with 5-level priority.
 
     Args:
         cli_overrides: Dict of CLI-provided config overrides.
@@ -29,7 +31,7 @@ def load_config(cli_overrides: dict | None = None, project_root: str | None = No
     if proj_path.exists():
         with open(proj_path) as f:
             proj_data = json.load(f)
-            # Filter out setup-wizard-only keys that don't belong in AgentConfig
+            # Filter out setup-wizard-only keys
             for k, v in proj_data.items():
                 if k in ("api_key", "base_url", "extras"):
                     continue
@@ -57,9 +59,13 @@ def ensure_api_keys(force_setup: bool = False):
     Settings are stored at ~/.totoro/settings.json (user home, not project).
 
     Args:
-        force_setup: When True, always run the setup wizard regardless of existing keys.
+        force_setup: When True, always run setup.
     """
-    from totoro.config.setup import load_provider_settings, inject_env_from_settings, run_setup_wizard
+    from totoro.config.setup import (
+        load_provider_settings,
+        inject_env_from_settings,
+        run_setup_wizard,
+    )
 
     # 1. Force setup via --setup flag
     if force_setup:
@@ -80,5 +86,9 @@ def ensure_api_keys(force_setup: bool = False):
         return
 
     print("Error: No API key configured.")
-    print("Run `totoro --setup` interactively to configure, or create ~/.totoro/settings.json.")
+    print(
+        "Run `totoro --setup` interactively to"
+        " configure, or create"
+        " ~/.totoro/settings.json."
+    )
     raise SystemExit(1)

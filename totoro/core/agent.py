@@ -1,15 +1,20 @@
-"""Totoro agent factory — uses create_agent() directly for lean middleware control.
+"""Totoro agent factory -- create_agent() for lean middleware.
 
-Bypasses create_deep_agent() to avoid the automatic SubAgentMiddleware (task tool)
-which adds ~2,178 tokens of overhead. Totoro uses its own orchestrate_tool for
-sub-agent management, so the framework's task tool is dead weight.
+Bypasses create_deep_agent() to avoid the automatic
+SubAgentMiddleware (task tool) which adds ~2,178 tokens of
+overhead. Totoro uses its own orchestrate_tool for sub-agent
+management, so the framework's task tool is dead weight.
 """
+
 import os
 from pathlib import Path
 from datetime import datetime
 
 from langchain.agents import create_agent
-from langchain.agents.middleware import HumanInTheLoopMiddleware, TodoListMiddleware
+from langchain.agents.middleware import (
+    HumanInTheLoopMiddleware,
+    TodoListMiddleware,
+)
 from deepagents.backends import LocalShellBackend
 from deepagents.graph import BASE_AGENT_PROMPT
 from deepagents.middleware.filesystem import FilesystemMiddleware
@@ -20,12 +25,21 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.store.memory import InMemoryStore
 
-from totoro.tools import git_tool, web_search_tool, fetch_url_tool, ask_user_tool
+from totoro.tools import (
+    git_tool,
+    web_search_tool,
+    fetch_url_tool,
+    ask_user_tool,
+)
 from totoro.config.schema import AgentConfig
 from totoro.core.models import create_lightweight_model
 from totoro.layers.sanitize import SanitizeMiddleware
 from totoro.layers.stall_detector import StallDetectorMiddleware
-from totoro.layers.auto_dream import AutoDreamExtractor, AutoDreamMiddleware, CharacterFile
+from totoro.layers.auto_dream import (
+    AutoDreamExtractor,
+    AutoDreamMiddleware,
+    CharacterFile,
+)
 
 # Re-export SubAgent type for SUBAGENT_CONFIGS (used by orchestrator)
 from deepagents.middleware.subagents import SubAgent
@@ -204,6 +218,7 @@ def _create_checkpointer():
     """
     try:
         import sqlite3
+
         db_dir = Path.home() / ".totoro"
         db_dir.mkdir(parents=True, exist_ok=True)
         db_path = db_dir / "checkpoints.db"
@@ -214,7 +229,12 @@ def _create_checkpointer():
     except Exception as e:
         import sys
         from totoro.colors import DIM, RESET
-        print(f"{DIM}  [warn] SQLite checkpointer failed ({e}), using in-memory{RESET}", file=sys.stderr)
+
+        print(
+            f"{DIM}  [warn] SQLite checkpointer failed"
+            f" ({e}), using in-memory{RESET}",
+            file=sys.stderr,
+        )
         return MemorySaver()
 
 
@@ -227,7 +247,8 @@ def create_totoro_agent(config: AgentConfig):
     Totoro manages sub-agents via its own orchestrate_tool.
 
     Args:
-        config: Agent configuration including model, provider, and layer settings.
+        config: Agent configuration including model,
+            provider, and layer settings.
 
     Returns:
         A tuple of (agent, checkpointer, store, auto_dream_extractor).
@@ -239,7 +260,11 @@ def create_totoro_agent(config: AgentConfig):
     store = InMemoryStore()
 
     system_prompt = _build_system_prompt(config)
-    _fb = config.fallback_model if config.fallback_model != "claude-haiku-4-5-20251001" else None
+    _fb = (
+        config.fallback_model
+        if config.fallback_model != "claude-haiku-4-5-20251001"
+        else None
+    )
     model = _resolve_model(config.model, config.provider, fallback_model=_fb)
 
     # Build parallel subagent instances for orchestrator
@@ -247,6 +272,7 @@ def create_totoro_agent(config: AgentConfig):
 
     # Custom tools + orchestrate
     from totoro.orchestrator import orchestrate_tool
+
     custom_tools = [git_tool, fetch_url_tool, ask_user_tool, orchestrate_tool]
     if os.environ.get("TAVILY_API_KEY"):
         custom_tools.append(web_search_tool)
@@ -269,10 +295,13 @@ def create_totoro_agent(config: AgentConfig):
     )
 
     # Build complete middleware stack
-    all_middleware = _build_full_middleware_stack(config, model, backend, store, hitl_config)
+    all_middleware = _build_full_middleware_stack(
+        config, model, backend, store, hitl_config
+    )
 
     # Discover skill paths
     from totoro.skills import SkillManager
+
     skill_mgr = SkillManager(config.project_root)
     skill_paths = skill_mgr.get_skill_paths() or None
 
@@ -291,42 +320,48 @@ def create_totoro_agent(config: AgentConfig):
         checkpointer=checkpointer,
         store=store,
         name="totoro",
-    ).with_config({
-        "recursion_limit": 9_999,
-    })
+    ).with_config(
+        {
+            "recursion_limit": 9_999,
+        }
+    )
 
     return agent, checkpointer, store, auto_dream
 
 
 def _build_full_middleware_stack(config, model, backend, store, hitl_config):
-    """Build the complete middleware stack, replacing create_deep_agent()'s auto-stack.
+    """Build the complete middleware stack.
 
-    Middleware ordering (matches create_deep_agent minus SubAgentMiddleware):
+    Replaces create_deep_agent()'s auto-stack.
+
+    Middleware ordering (matches create_deep_agent
+    minus SubAgentMiddleware):
 
     Framework base stack:
-      1. TodoListMiddleware         — write_todos tool
-      2. SkillsMiddleware           — skill discovery (if skills provided)
-      3. FilesystemMiddleware       — ls, read/write/edit_file, glob, grep, execute
-      4. [SubAgentMiddleware]       — EXCLUDED: task tool (~2,178 tokens saved)
-      5. SummarizationMiddleware    — conversation summarization
-      6. PatchToolCallsMiddleware   — fix dangling tool calls
+      1. TodoListMiddleware       - write_todos tool
+      2. SkillsMiddleware         - skill discovery
+      3. FilesystemMiddleware     - file I/O, shell
+      4. [SubAgentMiddleware]     - EXCLUDED
+      5. SummarizationMiddleware  - summarization
+      6. PatchToolCallsMiddleware - fix tool calls
 
     Totoro custom stack:
-      7. SanitizeMiddleware         — strip surrogate chars
-      8. ContextCompactionMiddleware — LLM-based context compaction
-      9. StallDetectorMiddleware    — detect agent stalls
-     10. AutoDreamMiddleware        — memory extraction
+      7. SanitizeMiddleware        - strip surrogates
+      8. ContextCompactionMiddleware - compaction
+      9. StallDetectorMiddleware   - stall detect
+     10. AutoDreamMiddleware       - memory extract
 
     Tail stack:
-     11. AnthropicPromptCachingMiddleware — prefix caching
-     12. HumanInTheLoopMiddleware   — HITL interrupts (if configured)
+     11. AnthropicPromptCachingMiddleware
+     12. HumanInTheLoopMiddleware  - HITL
 
     Args:
         config: Agent configuration.
         model: The primary LLM model instance.
-        backend: LocalShellBackend for filesystem/shell access.
+        backend: LocalShellBackend for shell access.
         store: InMemoryStore for agent state.
-        hitl_config: HITL interrupt configuration dict, or None for auto-approve.
+        hitl_config: HITL interrupt config dict,
+            or None for auto-approve.
 
     Returns:
         List of middleware instances in execution order.
@@ -340,10 +375,13 @@ def _build_full_middleware_stack(config, model, backend, store, hitl_config):
 
     # 2. Skills — skill discovery (if configured)
     from totoro.skills import SkillManager
+
     skill_mgr = SkillManager(config.project_root)
     skill_paths = skill_mgr.get_skill_paths()
     if skill_paths:
-        middleware_list.append(SkillsMiddleware(backend=backend, sources=skill_paths))
+        middleware_list.append(
+            SkillsMiddleware(backend=backend, sources=skill_paths)
+        )
 
     # 3. Filesystem — file I/O + shell execution tools
     middleware_list.append(FilesystemMiddleware(backend=backend))
@@ -365,17 +403,29 @@ def _build_full_middleware_stack(config, model, backend, store, hitl_config):
     # 8. Context Compaction — LLM-based auto-compact
     from totoro.layers.context_compaction import ContextCompactionMiddleware
     from totoro.layers._token_utils import get_model_context_window
+
     # Use fallback_model if explicitly set, otherwise reuse the main model
-    _lightweight_name = config.fallback_model if config.fallback_model != "claude-haiku-4-5-20251001" else config.model
-    compact_model = create_lightweight_model(_lightweight_name, provider=_resolved_provider)
-    context_window = config.context.model_context_window or get_model_context_window(config.model)
-    middleware_list.append(ContextCompactionMiddleware(
-        auto_threshold=config.context.auto_compact_threshold,
-        reactive_threshold=config.context.reactive_compact_threshold,
-        emergency_threshold=config.context.emergency_compact_threshold,
-        model_context_window=context_window,
-        model=compact_model,
-    ))
+    _lightweight_name = (
+        config.fallback_model
+        if config.fallback_model != "claude-haiku-4-5-20251001"
+        else config.model
+    )
+    compact_model = create_lightweight_model(
+        _lightweight_name, provider=_resolved_provider
+    )
+    context_window = (
+        config.context.model_context_window
+        or get_model_context_window(config.model)
+    )
+    middleware_list.append(
+        ContextCompactionMiddleware(
+            auto_threshold=config.context.auto_compact_threshold,
+            reactive_threshold=config.context.reactive_compact_threshold,
+            emergency_threshold=config.context.emergency_compact_threshold,
+            model_context_window=context_window,
+            model=compact_model,
+        )
+    )
 
     # 9. Stall Detection
     if config.loop.stall_detection:
@@ -383,8 +433,14 @@ def _build_full_middleware_stack(config, model, backend, store, hitl_config):
 
     # 10. Auto-Dream Memory
     if config.memory.auto_extract:
-        _lw_name = config.fallback_model if config.fallback_model != "claude-haiku-4-5-20251001" else config.model
-        lightweight_model = create_lightweight_model(_lw_name, provider=_resolved_provider)
+        _lw_name = (
+            config.fallback_model
+            if config.fallback_model != "claude-haiku-4-5-20251001"
+            else config.model
+        )
+        lightweight_model = create_lightweight_model(
+            _lw_name, provider=_resolved_provider
+        )
         character_file = CharacterFile()
         auto_dream = AutoDreamExtractor(
             model=lightweight_model,
@@ -398,23 +454,33 @@ def _build_full_middleware_stack(config, model, backend, store, hitl_config):
     # 11. Anthropic Prompt Caching — cache system prompt + tools prefix
     #     "ignore" silently skips for non-Anthropic models
     try:
-        from langchain_anthropic.middleware import AnthropicPromptCachingMiddleware
-        middleware_list.append(AnthropicPromptCachingMiddleware(unsupported_model_behavior="ignore"))
+        from langchain_anthropic.middleware import (
+            AnthropicPromptCachingMiddleware,
+        )
+
+        middleware_list.append(
+            AnthropicPromptCachingMiddleware(
+                unsupported_model_behavior="ignore"
+            )
+        )
     except ImportError:
         pass
 
     # 12. HITL — interrupt on destructive tools
     if hitl_config:
-        middleware_list.append(HumanInTheLoopMiddleware(interrupt_on=hitl_config))
+        middleware_list.append(
+            HumanInTheLoopMiddleware(interrupt_on=hitl_config)
+        )
 
     return middleware_list
 
 
 def _build_orchestrator_subagents(model, config: AgentConfig):
-    """Register serializable subagent configs for multiprocessing orchestrator.
+    """Register serializable subagent configs.
 
-    Instead of pre-building graphs (not pickle-safe), we pass serializable
-    configs to the orchestrator. Each child process rebuilds its own graph.
+    Instead of pre-building graphs (not pickle-safe),
+    we pass serializable configs to the orchestrator.
+    Each child process rebuilds its own graph.
 
     Args:
         model: The primary LLM model instance.
@@ -425,22 +491,28 @@ def _build_orchestrator_subagents(model, config: AgentConfig):
     # Extract serializable config: name + system_prompt only
     serializable_configs = []
     for cfg in SUBAGENT_CONFIGS:
-        serializable_configs.append({
-            "name": cfg["name"],
-            "description": cfg.get("description", ""),
-            "system_prompt": cfg["system_prompt"],
-        })
+        serializable_configs.append(
+            {
+                "name": cfg["name"],
+                "description": cfg.get("description", ""),
+                "system_prompt": cfg["system_prompt"],
+            }
+        )
 
     # Pass the resolved provider so child processes skip auto-detection
     register_subagent_configs(
         configs=serializable_configs,
         model_name=config.model,
-        provider=_resolved_provider if _resolved_provider != "auto" else config.provider,
+        provider=_resolved_provider
+        if _resolved_provider != "auto"
+        else config.provider,
         project_root=str(Path(config.project_root).resolve()),
     )
 
 
-def _resolve_model(model_name: str, provider: str = "auto", fallback_model: str | None = None):
+def _resolve_model(
+    model_name: str, provider: str = "auto", fallback_model: str | None = None
+):
     """Resolve model — supports OpenRouter, Anthropic, OpenAI, and vLLM.
 
     Tries the main model first. If creation fails and a fallback_model is
@@ -449,10 +521,12 @@ def _resolve_model(model_name: str, provider: str = "auto", fallback_model: str 
     Args:
         model_name: Model name/identifier.
         provider: "auto" to detect from env, or explicit provider name.
-        fallback_model: Optional fallback model name to try if main model fails.
+        fallback_model: Optional fallback model name
+            to try if main model fails.
 
     Returns:
-        LLM model instance. Also sets _resolved_provider as side-effect for orchestrator.
+        LLM model instance. Also sets
+        _resolved_provider as side-effect.
 
     Raises:
         RuntimeError: If neither main nor fallback model could be resolved.
@@ -471,13 +545,23 @@ def _resolve_model(model_name: str, provider: str = "auto", fallback_model: str 
         if factory is None:
             raise RuntimeError(f"Unknown provider: {provider}")
         model = factory(model_name)
-        if model is None and fallback_model and fallback_model != model_name:
+        has_fb = fallback_model and fallback_model != model_name
+        if model is None and has_fb:
             import sys as _sys
-            print(f"  [info] Main model '{model_name}' unavailable, trying fallback '{fallback_model}'",
-                  file=_sys.stderr, flush=True)
+
+            print(
+                f"  [info] Main model '{model_name}'"
+            f" unavailable, trying fallback"
+            f" '{fallback_model}'",
+                file=_sys.stderr,
+                flush=True,
+            )
             model = factory(fallback_model)
         if model is None:
-            raise RuntimeError(f"Provider '{provider}' is not configured. Run `totoro --setup` to configure.")
+            raise RuntimeError(
+                f"Provider '{provider}' is not configured."
+                " Run `totoro --setup` to configure."
+            )
         _resolved_provider = provider
         return model
 
@@ -491,8 +575,14 @@ def _resolve_model(model_name: str, provider: str = "auto", fallback_model: str 
     # Try fallback model across all providers
     if fallback_model and fallback_model != model_name:
         import sys as _sys
-        print(f"  [info] Main model '{model_name}' unavailable, trying fallback '{fallback_model}'",
-              file=_sys.stderr, flush=True)
+
+        print(
+            f"  [info] Main model '{model_name}'"
+            f" unavailable, trying fallback"
+            f" '{fallback_model}'",
+            file=_sys.stderr,
+            flush=True,
+        )
         for prov_name, factory in providers.items():
             model = factory(fallback_model)
             if model is not None:
@@ -500,28 +590,34 @@ def _resolve_model(model_name: str, provider: str = "auto", fallback_model: str 
                 return model
 
     raise RuntimeError(
-        "No API key found. Run `totoro --setup` to configure your provider."
+        "No API key found. Run `totoro --setup`"
+        " to configure your provider."
     )
 
 
-# Resolved provider from last _resolve_model call (used by orchestrator to skip re-detection)
+# Resolved provider from last _resolve_model call
+# (used by orchestrator to skip re-detection)
 _resolved_provider: str = "auto"
 _api_timeout: int = 60  # Set from config in create_totoro_agent
 
 
 def _make_openrouter(model_name: str):
-    """Main model uses ChatOpenAI + OpenRouter base URL for reliable streaming.
+    """Main model via ChatOpenAI + OpenRouter base URL.
 
-    ChatOpenRouter is used only for lightweight (non-streaming) calls in models.py.
+    ChatOpenRouter is used only for lightweight
+    (non-streaming) calls in models.py.
     """
     key = os.environ.get("OPENROUTER_API_KEY")
     if not key:
         return None
     from langchain_openai import ChatOpenAI
+
     return ChatOpenAI(
         model=model_name,
         openai_api_key=key,
-        openai_api_base=os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+        openai_api_base=os.environ.get(
+            "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+        ),
         request_timeout=_api_timeout,
     )
 
@@ -531,7 +627,10 @@ def _make_anthropic(model_name: str):
     if not key:
         return None
     from langchain_anthropic import ChatAnthropic
-    return ChatAnthropic(model_name=model_name, api_key=key, timeout=_api_timeout)
+
+    return ChatAnthropic(
+        model_name=model_name, api_key=key, timeout=_api_timeout
+    )
 
 
 def _make_openai(model_name: str):
@@ -539,7 +638,10 @@ def _make_openai(model_name: str):
     if not key:
         return None
     from langchain_openai import ChatOpenAI
-    return ChatOpenAI(model=model_name, openai_api_key=key, request_timeout=_api_timeout)
+
+    return ChatOpenAI(
+        model=model_name, openai_api_key=key, request_timeout=_api_timeout
+    )
 
 
 def _make_vllm(model_name: str):
@@ -547,6 +649,7 @@ def _make_vllm(model_name: str):
     if not base_url:
         return None
     from langchain_openai import ChatOpenAI
+
     return ChatOpenAI(
         model=model_name,
         openai_api_key=os.environ.get("VLLM_API_KEY", "EMPTY"),
@@ -581,9 +684,12 @@ def _build_system_prompt(config: AgentConfig) -> str:
     if totoro_md_path.exists():
         sections.append(
             "# Project Context\n"
-            "A TOTORO.md file exists in the project root with comprehensive project context "
-            "(architecture, tech stack, patterns, conventions). "
-            "Read it with read_file when you need to understand the project before making changes."
+            "A TOTORO.md file exists in the project"
+            " root with comprehensive project context"
+            " (architecture, tech stack, patterns,"
+            " conventions). Read it with read_file"
+            " when you need to understand the project"
+            " before making changes."
         )
 
     # ── User memory from character.md ──
@@ -598,13 +704,12 @@ def _build_system_prompt(config: AgentConfig) -> str:
     sections.append(f"""
 # Environment
 - Working directory: {Path(config.project_root).resolve()}
-- Current date: {datetime.now().strftime('%Y-%m-%d')}
+- Current date: {datetime.now().strftime("%Y-%m-%d")}
 - Model: {config.model}
 - Provider: {config.provider}
 """)
 
     return "\n\n".join(sections)
-
 
 
 def _load_character_md() -> str | None:

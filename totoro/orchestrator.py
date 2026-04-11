@@ -10,6 +10,7 @@ Architecture:
 
   The curses SplitPaneTUI handles rendering during orchestration.
 """
+
 import os
 import time
 import json
@@ -24,18 +25,22 @@ from totoro.utils import sanitize_text
 from totoro.pane import SubagentEvent, SubagentResult, PaneManager
 
 # ─── Module-level state (set by create_totoro_agent / CLI) ───
-_subagent_configs: list[dict] = []   # serializable subagent configs
-_model_config: dict = {}             # {model_name, provider} for rebuilding in child process
+_subagent_configs: list[dict] = []  # serializable subagent configs
+_model_config: dict = {}  # {model_name, provider}
 _project_root: str = "."
 _tracker = None
 _pane_manager: PaneManager | None = None
-_plan_only: bool = False             # When True, catbus plans but does NOT auto-dispatch
-_auto_approve: bool = False          # When True, subagents skip HITL approval
-_allow_patterns: list[str] = []     # Permission allow patterns from settings.json
-_runtime_auto_approve: bool = False  # Set True when user chooses "Approve All" during session
+_plan_only: bool = False  # When True, catbus plans but does NOT auto-dispatch
+_auto_approve: bool = False  # When True, subagents skip HITL approval
+_allow_patterns: list[str] = []  # Permission allow patterns from settings.json
+_runtime_auto_approve: bool = (
+    False  # Set True when user chooses "Approve All" during session
+)
 
 
-def register_subagent_configs(configs: list[dict], model_name: str, provider: str, project_root: str):
+def register_subagent_configs(
+    configs: list[dict], model_name: str, provider: str, project_root: str
+):
     """Register serializable subagent configs for multiprocessing.
 
     Args:
@@ -106,16 +111,22 @@ def set_allow_patterns(patterns: list[str]):
 
 # ─── Orchestrate tool ───
 
+
 @tool
 def orchestrate_tool(tasks_json: str) -> str:
-    """Run sub-agents in parallel. Input: JSON array of {"type": "<agent>", "task": "<description>"}.
-    Types: catbus (plan), satsuki (code), mei (research), susuwatari (micro), tatsuo (review).
+    """Run sub-agents in parallel.
 
-    If the only task is a catbus (planner), the plan is automatically executed:
-    catbus returns a plan → execution agents are dispatched → results are returned.
+    Input: JSON array of
+    {"type": "<agent>", "task": "<description>"}.
+    Types: catbus (plan), satsuki (code),
+    mei (research), susuwatari (micro), tatsuo (review).
+
+    If the only task is catbus, the plan is auto-executed:
+    catbus returns plan -> agents dispatched -> results.
 
     Args:
-        tasks_json: JSON array, e.g. '[{"type":"satsuki","task":"Create index.html"}]'
+        tasks_json: JSON array, e.g.
+            '[{"type":"satsuki","task":"Create index.html"}]'
     """
     try:
         tasks = json.loads(tasks_json)
@@ -125,7 +136,7 @@ def orchestrate_tool(tasks_json: str) -> str:
     if not isinstance(tasks, list) or not tasks:
         return "Error: tasks must be a non-empty JSON array."
 
-    # ── Auto-dispatch: if only catbus tasks, run plan → execute automatically ──
+    # Auto-dispatch: if only catbus, plan -> execute
     # Skip auto-dispatch in plan-only mode (user only wants the plan)
     catbus_only = all(t.get("type", "") == "catbus" for t in tasks)
     if catbus_only and not _plan_only:
@@ -151,8 +162,14 @@ def _run_and_format(tasks: list[dict]) -> str:
         if isinstance(result, SubagentResult):
             result_text = sanitize_text(result.final_text)
             if len(result_text) > MAX_RESULT_CHARS:
-                result_text = result_text[:MAX_RESULT_CHARS] + "\n...(truncated)"
-            files = ", ".join(result.files_modified[:5]) if result.files_modified else "none"
+                result_text = (
+                    result_text[:MAX_RESULT_CHARS] + "\n...(truncated)"
+                )
+            files = (
+                ", ".join(result.files_modified[:5])
+                if result.files_modified
+                else "none"
+            )
             parts.append(
                 f"[{name}] {len(result.tools_used)} tools, files: {files}\n"
                 f"{result_text}"
@@ -160,7 +177,9 @@ def _run_and_format(tasks: list[dict]) -> str:
         else:
             result_text = sanitize_text(str(result))
             if len(result_text) > MAX_RESULT_CHARS:
-                result_text = result_text[:MAX_RESULT_CHARS] + "\n...(truncated)"
+                result_text = (
+                    result_text[:MAX_RESULT_CHARS] + "\n...(truncated)"
+                )
             parts.append(f"[{name}]\n{result_text}")
 
     return "\n\n".join(parts) or "(no results)"
@@ -226,7 +245,7 @@ def _parse_plan_json(text: str) -> list[dict] | None:
     import re
 
     # Strategy 1: ```plan or ```json fenced blocks
-    fence_pattern = re.compile(r'```(?:plan|json)\s*\n(.*?)```', re.DOTALL)
+    fence_pattern = re.compile(r"```(?:plan|json)\s*\n(.*?)```", re.DOTALL)
     match = fence_pattern.search(text)
     if match:
         try:
@@ -237,30 +256,40 @@ def _parse_plan_json(text: str) -> list[dict] | None:
             pass
 
     # Strategy 2: Any fenced code block containing [
-    any_fence = re.compile(r'```\w*\s*\n(.*?)```', re.DOTALL)
+    any_fence = re.compile(r"```\w*\s*\n(.*?)```", re.DOTALL)
     for m in any_fence.finditer(text):
         content = m.group(1).strip()
         if content.startswith("["):
             try:
                 parsed = json.loads(content)
-                if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+                if (
+                    isinstance(parsed, list)
+                    and parsed
+                    and isinstance(parsed[0], dict)
+                ):
                     return parsed
             except json.JSONDecodeError:
                 pass
 
     # Strategy 3: Raw JSON array (last occurrence of [{...},...])
-    bracket_pattern = re.compile(r'\[\s*\{[\s\S]*?\}\s*\]')
+    bracket_pattern = re.compile(r"\[\s*\{[\s\S]*?\}\s*\]")
     matches = list(bracket_pattern.finditer(text))
     for m in reversed(matches):
         try:
             parsed = json.loads(m.group())
-            if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+            if (
+                isinstance(parsed, list)
+                and parsed
+                and isinstance(parsed[0], dict)
+            ):
                 return parsed
         except json.JSONDecodeError:
             continue
 
     # Strategy 4: Individual {"type":...,"task":...} objects on lines
-    obj_pattern = re.compile(r'\{\s*"type"\s*:\s*"[^"]+"\s*,\s*"task"\s*:\s*"[^"]*"[^}]*\}')
+    obj_pattern = re.compile(
+        r'\{\s*"type"\s*:\s*"[^"]+"\s*,\s*"task"\s*:\s*"[^"]*"[^}]*\}'
+    )
     obj_matches = obj_pattern.findall(text)
     if obj_matches:
         tasks = []
@@ -278,15 +307,17 @@ def _parse_plan_json(text: str) -> list[dict] | None:
 def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
     """Run catbus planner, parse plan, then auto-dispatch execution agents.
 
-    Flow: catbus → parse plan JSON → run execution agents → return all results.
+    Flow: catbus -> parse plan JSON -> run
+    execution agents -> return all results.
 
     Args:
         catbus_tasks: List of catbus planner task dicts.
 
     Returns:
-        Combined formatted string of plan summary and execution results.
+        Combined formatted string of plan summary
+        and execution results.
     """
-    # Phase 1: Run catbus planner (suppress summary — will show combined at end)
+    # Phase 1: Run catbus planner (suppress summary)
     plan_results = _run_parallel(catbus_tasks, suppress_summary=True)
 
     # Collect plan text and parse execution tasks
@@ -294,14 +325,24 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
     plan_summary_parts = []
 
     for name, result in plan_results.items():
-        plan_text = result.final_text if isinstance(result, SubagentResult) else str(result)
-        plan_summary_parts.append(f"[{name}] Plan:\n{sanitize_text(plan_text[:800])}")
+        plan_text = (
+            result.final_text
+            if isinstance(result, SubagentResult)
+            else str(result)
+        )
+        plan_summary_parts.append(
+            f"[{name}] Plan:\n{sanitize_text(plan_text[:800])}"
+        )
 
         parsed = _parse_plan_json(plan_text)
         if parsed:
             # Validate each task has type and task/description
             for t in parsed:
-                if isinstance(t, dict) and t.get("type") and (t.get("task") or t.get("description")):
+                if (
+                    isinstance(t, dict)
+                    and t.get("type")
+                    and (t.get("task") or t.get("description"))
+                ):
                     # Don't allow catbus to spawn more catbus
                     if t.get("type") != "catbus":
                         execution_tasks.append(t)
@@ -310,60 +351,97 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
     MAX_PARALLEL_TASKS = 5
     if len(execution_tasks) > MAX_PARALLEL_TASKS:
         import sys as _sys
+
         print(
-            f"  [info] Plan has {len(execution_tasks)} tasks, capping to {MAX_PARALLEL_TASKS}",
-            file=_sys.stderr, flush=True,
+            f"  [info] Plan has {len(execution_tasks)}"
+        f" tasks, capping to {MAX_PARALLEL_TASKS}",
+            file=_sys.stderr,
+            flush=True,
         )
         execution_tasks = execution_tasks[:MAX_PARALLEL_TASKS]
 
     if not execution_tasks:
-        # Parsing failed — fall back to delegating original task to satsuki
-        # Extract original task description from catbus tasks
-        original_desc = catbus_tasks[0].get("task", catbus_tasks[0].get("description", ""))
+        # Parsing failed — fall back to satsuki
+        # Extract original task from catbus tasks
+        original_desc = catbus_tasks[0].get(
+            "task", catbus_tasks[0].get("description", "")
+        )
         if original_desc:
             import sys as _sys
-            print(f"  [info] Plan parsing failed, delegating to satsuki directly", file=_sys.stderr, flush=True)
+
+            print(
+                "  [info] Plan parsing failed,"
+                " delegating to satsuki directly",
+                file=_sys.stderr,
+                flush=True,
+            )
             execution_tasks = [{"type": "satsuki", "task": original_desc}]
         else:
             hint = (
-                "[Auto-dispatch failed] Could not parse plan and no original task found.\n"
-                "Call orchestrate_tool with specific tasks."
+                "[Auto-dispatch failed] Could not parse"
+                " plan and no original task found.\n"
+                "Call orchestrate_tool with specific"
+                " tasks."
             )
             return "\n\n".join(plan_summary_parts) + "\n\n" + hint
 
     # ── Inject context into execution tasks ──
     # Sub-agents have NO conversation history — make their tasks self-contained
     # by prepending the original user request and plan summary.
-    original_request = catbus_tasks[0].get("task", catbus_tasks[0].get("description", ""))
+    original_request = catbus_tasks[0].get(
+        "task", catbus_tasks[0].get("description", "")
+    )
     plan_context = "\n".join(plan_summary_parts)
     execution_tasks = _inject_context_into_tasks(
-        execution_tasks, original_request, plan_context,
+        execution_tasks,
+        original_request,
+        plan_context,
     )
 
     # Build plan display (used both before and after execution)
     from totoro.colors import DIM, BOLD, BLUE, AMBER_LT, RESET, IVORY
+
     task_lines = []
     for i, t in enumerate(execution_tasks):
         desc = t.get("task", t.get("description", ""))
-        # Strip injected context headers — show only the actual task
+        # Strip injected context headers
         if "## Your Task\n" in desc:
             desc = desc.split("## Your Task\n")[-1]
         agent_type = t.get("type", "?")
-        task_lines.append(f"  {DIM}{i+1}.{RESET} {BLUE}{agent_type}{RESET} {IVORY}{desc[:80]}{RESET}")
+        task_lines.append(
+            f"  {DIM}{i + 1}.{RESET}"
+            f" {BLUE}{agent_type}{RESET}"
+            f" {IVORY}{desc[:80]}{RESET}"
+        )
 
-    plan_header = f"{DIM}── {AMBER_LT}Plan{DIM} ({len(execution_tasks)} tasks) ──{RESET}"
+    n_tasks = len(execution_tasks)
+    plan_header = (
+        f"{DIM}── {AMBER_LT}Plan{DIM}"
+        f" ({n_tasks} tasks) ──{RESET}"
+    )
     plan_display_colored = plan_header + "\n" + "\n".join(task_lines)
     # Plain text version for tool result (no ANSI)
-    plan_display_plain = f"Plan ({len(execution_tasks)} tasks):\n" + "\n".join(
-        f"  {i+1}. [{t.get('type')}] {(t.get('task','') if '## Your Task' not in t.get('task','') else t.get('task','').split('## Your Task\n')[-1])[:80]}"
+    def _task_desc(t):
+        raw = t.get("task", "")
+        if "## Your Task" in raw:
+            raw = raw.split("## Your Task\n")[-1]
+        return raw[:80]
+
+    plain_lines = [
+        f"  {i + 1}. [{t.get('type')}] {_task_desc(t)}"
         for i, t in enumerate(execution_tasks)
+    ]
+    plan_display_plain = (
+        f"Plan ({n_tasks} tasks):\n"
+        + "\n".join(plain_lines)
     )
 
-    # Print plan before curses TUI starts (visible in scrollback)
+    # Print plan before curses TUI starts
     from totoro.diff import safe_print
+
     safe_print(f"\n{plan_display_colored}\n")
 
-    # Phase 2: Split tatsuo (verification) from workers — tatsuo runs AFTER workers complete
+    # Phase 2: Split tatsuo (verify) from workers
     worker_tasks = [t for t in execution_tasks if t.get("type") != "tatsuo"]
     verify_tasks = [t for t in execution_tasks if t.get("type") == "tatsuo"]
 
@@ -387,10 +465,27 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
         # Check if tatsuo found failures
         failures = []
         for name, result in verify_results.items():
-            text = result.final_text if isinstance(result, SubagentResult) else str(result)
+            text = (
+                result.final_text
+                if isinstance(result, SubagentResult)
+                else str(result)
+            )
             text_lower = text.lower()
-            if any(kw in text_lower for kw in ("fail", "error", "broken", "not working", "does not",
-                                                 "cannot", "missing", "crash", "exception", "bug")):
+            if any(
+                kw in text_lower
+                for kw in (
+                    "fail",
+                    "error",
+                    "broken",
+                    "not working",
+                    "does not",
+                    "cannot",
+                    "missing",
+                    "crash",
+                    "exception",
+                    "bug",
+                )
+            ):
                 failures.append((name, text))
 
         if not failures:
@@ -399,26 +494,44 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
         if attempt >= MAX_RETRY - 1:
             # Last attempt — don't retry, just report
             from totoro.diff import safe_print
-            safe_print(f"\n  \033[31m[verify] {len(failures)} issue(s) remain after {MAX_RETRY} retries\033[0m")
+
+            safe_print(
+                f"\n  \033[31m[verify]"
+                f" {len(failures)} issue(s) remain"
+                f" after {MAX_RETRY} retries\033[0m"
+            )
             break
 
         # Build fix tasks from failure descriptions
         from totoro.diff import safe_print
-        safe_print(f"\n  \033[33m[verify] {len(failures)} issue(s) found — auto-fix attempt {attempt + 1}/{MAX_RETRY}\033[0m")
+
+        safe_print(
+            f"\n  \033[33m[verify]"
+            f" {len(failures)} issue(s) found"
+            f" — auto-fix attempt"
+            f" {attempt + 1}/{MAX_RETRY}\033[0m"
+        )
 
         fix_tasks = []
         failure_context = "\n".join(f"- {text[:300]}" for _, text in failures)
         for _, failure_text in failures:
-            fix_tasks.append({
-                "type": "satsuki",
-                "task": (
-                    f"Fix the following verification failures:\n{failure_context}\n\n"
-                    f"The original request was: {original_request[:200]}"
-                ),
-            })
+            fix_tasks.append(
+                {
+                    "type": "satsuki",
+                    "task": (
+                        "Fix the following verification"
+                        " failures:\n"
+                        f"{failure_context}\n\n"
+                        "The original request was: "
+                        f"{original_request[:200]}"
+                    ),
+                }
+            )
         # Deduplicate — one satsuki fix task is enough
         fix_tasks = fix_tasks[:1]
-        fix_tasks = _inject_context_into_tasks(fix_tasks, original_request, failure_context)
+        fix_tasks = _inject_context_into_tasks(
+            fix_tasks, original_request, failure_context
+        )
 
         if _pane_manager:
             _pane_manager.clear()
@@ -438,8 +551,14 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
         if isinstance(result, SubagentResult):
             result_text = sanitize_text(result.final_text)
             if len(result_text) > MAX_RESULT_CHARS:
-                result_text = result_text[:MAX_RESULT_CHARS] + "\n...(truncated)"
-            files = ", ".join(result.files_modified[:5]) if result.files_modified else "none"
+                result_text = (
+                    result_text[:MAX_RESULT_CHARS] + "\n...(truncated)"
+                )
+            files = (
+                ", ".join(result.files_modified[:5])
+                if result.files_modified
+                else "none"
+            )
             parts.append(
                 f"[{name}] {len(result.tools_used)} tools, files: {files}\n"
                 f"{result_text}"
@@ -447,13 +566,18 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
         else:
             result_text = sanitize_text(str(result))
             if len(result_text) > MAX_RESULT_CHARS:
-                result_text = result_text[:MAX_RESULT_CHARS] + "\n...(truncated)"
+                result_text = (
+                    result_text[:MAX_RESULT_CHARS] + "\n...(truncated)"
+                )
             parts.append(f"[{name}]\n{result_text}")
 
     parts.append(
         "── IMPORTANT ──\n"
-        "All tasks above are complete. You MUST now respond to the user with a summary of what was done. "
-        "Include: files created/modified, key decisions made, and how to run/use the result."
+        "All tasks above are complete. You MUST now "
+        "respond to the user with a summary of what "
+        "was done. Include: files created/modified, "
+        "key decisions made, and how to run/use the "
+        "result."
     )
 
     return "\n\n".join(parts)
@@ -461,15 +585,19 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
 
 # ─── Parallel execution engine (multiprocessing) ───
 
-def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str, SubagentResult | str]:
+
+def _run_parallel(
+    tasks: list[dict], suppress_summary: bool = False
+) -> dict[str, SubagentResult | str]:
     """Execute tasks in parallel using multiprocessing + curses split-pane.
 
     Args:
         tasks: List of task dicts with "type" and "task" keys.
-        suppress_summary: When True, skip printing summary after completion.
+        suppress_summary: When True, skip summary.
 
     Returns:
-        Dict mapping subagent labels to their SubagentResult or error string.
+        Dict mapping subagent labels to their
+        SubagentResult or error string.
     """
     import curses as _curses
     from totoro.tui import SplitPaneTUI
@@ -478,6 +606,7 @@ def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str
     event_queue: mp.Queue = mp.Queue(maxsize=2000)
     config_map = {cfg["name"]: cfg for cfg in _subagent_configs}
     import sys as _sys
+
     use_curses = (
         _pane_manager is not None
         and _tracker is not None
@@ -500,14 +629,18 @@ def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str
     # Register subagents and start processes
     processes: dict[str, mp.Process] = {}
     result_holders: dict[str, mp.Queue] = {}
-    response_holders: dict[str, mp.Queue] = {}  # parent→child for HITL responses
+    response_holders: dict[
+        str, mp.Queue
+    ] = {}  # parent→child for HITL responses
 
     for i, task in enumerate(tasks):
-        agent_type = task.get("type", "satsuki")  # default to satsuki (senior agent)
+        agent_type = task.get(
+            "type", "satsuki"
+        )  # default to satsuki (senior agent)
         description = task.get("task", task.get("description", ""))
         label = f"{agent_type}-{i}"
 
-        # Extract display-friendly description (strip injected context headers)
+        # Extract display-friendly description
         display_desc = description
         if "## Your Task\n" in display_desc:
             display_desc = display_desc.split("## Your Task\n")[-1]
@@ -517,10 +650,23 @@ def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str
         cfg = config_map.get(agent_type)
         if cfg is None:
             import sys as _sys
-            print(f"  [warn] Unknown agent type '{agent_type}', falling back to satsuki", file=_sys.stderr, flush=True)
+
+            print(
+                f"  [warn] Unknown agent type"
+                f" '{agent_type}', using satsuki",
+                file=_sys.stderr,
+                flush=True,
+            )
             cfg = config_map.get("satsuki")
         if cfg is None:
-            cfg = {"name": "susuwatari", "system_prompt": "You are Susuwatari, a micro agent. Execute the task directly.", "description": ""}
+            cfg = {
+                "name": "susuwatari",
+                "system_prompt": (
+                    "You are Susuwatari, a micro agent."
+                    " Execute the task directly."
+                ),
+                "description": "",
+            }
 
         if _tracker:
             _tracker.on_subagent_start(label, display_desc)
@@ -535,8 +681,17 @@ def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str
 
         p = mp.Process(
             target=_worker_process,
-            args=(cfg, description, label, _model_config, _project_root,
-                  event_queue, result_q, response_q, _auto_approve or _runtime_auto_approve),
+            args=(
+                cfg,
+                description,
+                label,
+                _model_config,
+                _project_root,
+                event_queue,
+                result_q,
+                response_q,
+                _auto_approve or _runtime_auto_approve,
+            ),
             daemon=True,
         )
         p.start()
@@ -556,18 +711,20 @@ def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str
 
     # Run curses TUI while processes execute
     if use_curses:
-        # Suppress ANSI status panel rendering during curses mode
-        # Must hold lock to prevent race with render thread's stdout writes
+        # Suppress ANSI status panel during curses
+        # Hold lock to prevent render thread races
         with _tracker._lock:
             _tracker._panel_enabled = False
             _tracker._clear_previous()
             _tracker._last_panel_lines = 0
 
         tui = SplitPaneTUI(
-            tracker=_tracker, pane_manager=_pane_manager,
-            hitl_pending=hitl_pending, response_queues=response_holders,
+            tracker=_tracker,
+            pane_manager=_pane_manager,
+            hitl_pending=hitl_pending,
+            response_queues=response_holders,
         )
-        # Inherit runtime auto-approve from previous TUI session (e.g. retry loop)
+        # Inherit runtime auto-approve from prior TUI
         if _runtime_auto_approve or _auto_approve:
             tui._global_auto_approve = True
         try:
@@ -575,9 +732,16 @@ def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str
         except Exception as e:
             # curses.wrapper already calls endwin(), don't call it again
             err_msg = str(e)
-            if "nocbreak" not in err_msg and "endwin" not in err_msg:
-                print(f"  [warn] TUI error: {e}", file=_sys.stderr, flush=True)
-        # Panel stays disabled — render_final_summary in cli.py will handle cleanup
+            if (
+                "nocbreak" not in err_msg
+                and "endwin" not in err_msg
+            ):
+                print(
+                    f"  [warn] TUI error: {e}",
+                    file=_sys.stderr,
+                    flush=True,
+                )
+        # Panel stays disabled — cli.py handles cleanup
     else:
         # Non-curses: poll for HITL requests and process completion
         while _pane_manager and _pane_manager.is_active:
@@ -588,8 +752,11 @@ def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str
                     rq = response_holders.get(ev.label)
                     if rq:
                         rq.put({"decisions": [{"type": "approve"}]}, timeout=1)
-                    _pane_manager.update_subagent(SubagentEvent(
-                        label=ev.label, event_type="hitl_response", data={}))
+                    _pane_manager.update_subagent(
+                        SubagentEvent(
+                            label=ev.label, event_type="hitl_response", data={}
+                        )
+                    )
                 except queue.Empty:
                     pass
             else:
@@ -603,7 +770,7 @@ def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str
     monitor_halt.set()
     monitor.join(timeout=2)
 
-    # Reap all processes — they should already be dead since TUI waited for is_active=False
+    # Reap all processes — should be dead already
     for label, p in processes.items():
         # Join with generous timeout
         p.join(timeout=30)
@@ -611,11 +778,20 @@ def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str
         # Force kill if still alive
         if p.is_alive():
             import sys as _sys
-            print(f"\n  [warn] {label}: timed out, terminating...", file=_sys.stderr, flush=True)
+
+            print(
+                f"\n  [warn] {label}: timed out, terminating...",
+                file=_sys.stderr,
+                flush=True,
+            )
             p.terminate()
             p.join(timeout=5)
         if p.is_alive():
-            print(f"  [warn] {label}: force killing", file=_sys.stderr, flush=True)
+            print(
+                f"  [warn] {label}: force killing",
+                file=_sys.stderr,
+                flush=True,
+            )
             p.kill()
             p.join(timeout=2)
 
@@ -664,22 +840,25 @@ def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str
                     if pane:
                         if result.files_modified:
                             pane.files = list(result.files_modified)
-                        # Extract first meaningful line as one-line summary
+                        # First meaningful line as summary
                         if result.final_text:
                             for line in result.final_text.strip().splitlines():
                                 line = line.strip()
-                                if line and not line.startswith(('#', '```', '---')):
+                                if line and not line.startswith(
+                                    ("#", "```", "---")
+                                ):
                                     pane.summary_text = line
                                     break
 
-    # Print summary + file change list after panel is fully disabled.
+    # Print summary + file change list.
     if _pane_manager:
         if not suppress_summary:
             summary = _pane_manager.get_summary()
             if summary:
                 from totoro.diff import safe_print
+
                 safe_print(summary)
-                # Collect and display deduplicated file paths from all subagents
+                # Collect deduplicated file paths
                 all_files = []
                 for label, result in results.items():
                     if isinstance(result, SubagentResult):
@@ -688,15 +867,23 @@ def _run_parallel(tasks: list[dict], suppress_summary: bool = False) -> dict[str
                 if all_files:
                     from totoro.colors import BLUE, DIM, RESET
                     import os
+
                     unique_files = list(dict.fromkeys(all_files))
                     for fp in unique_files[:10]:
                         try:
                             rel = os.path.relpath(fp)
                         except ValueError:
                             rel = fp
-                        safe_print(f"  {DIM}⎿{RESET} {BLUE}{rel}{RESET}")
+                        safe_print(
+                            f"  {DIM}⎿{RESET}"
+                            f" {BLUE}{rel}{RESET}"
+                        )
                     if len(unique_files) > 10:
-                        safe_print(f"  {DIM}  +{len(unique_files) - 10} more files{RESET}")
+                        safe_print(
+                            f"  {DIM}  +"
+                            f"{len(unique_files) - 10}"
+                            f" more files{RESET}"
+                        )
         _pane_manager.clear()
 
     return results
@@ -708,7 +895,7 @@ def _process_monitor(
     tracker,
     halt: threading.Event,
 ):
-    """Monitor thread: detect child process exit and mark panes done so TUI can exit.
+    """Monitor thread: detect process exit, mark panes done.
 
     This solves the deadlock where TUI waits for is_active=False but
     complete_subagent() was only called after TUI exit.
@@ -736,6 +923,7 @@ def _process_monitor(
 
 # ─── Worker process ───
 
+
 def _worker_process(
     subagent_cfg: dict,
     description: str,
@@ -747,49 +935,61 @@ def _worker_process(
     response_queue: "mp.Queue | None" = None,
     auto_approve: bool = False,
 ):
-    """Run in a child process. Routes to lightweight LLM call or full agent.
+    """Run in a child process.
+
+    Routes to lightweight LLM call or full agent.
 
     Args:
-        subagent_cfg: Serializable config dict for the subagent character.
+        subagent_cfg: Serializable config dict.
         description: Task description to execute.
-        label: Unique label for this worker (e.g. "satsuki-0").
-        model_config: Dict with "model_name" and "provider" for rebuilding model.
-        project_root: Absolute path to the project root directory.
-        event_queue: Multiprocessing queue for streaming events to parent.
-        result_queue: Multiprocessing queue to return the final SubagentResult.
-        response_queue: Multiprocessing queue for HITL responses from parent.
-        auto_approve: Whether to skip HITL approval prompts.
+        label: Unique label (e.g. "satsuki-0").
+        model_config: Dict with model_name/provider.
+        project_root: Absolute path to project root.
+        event_queue: Queue for streaming events.
+        result_queue: Queue for final SubagentResult.
+        response_queue: Queue for HITL responses.
+        auto_approve: Skip HITL approval prompts.
     """
     try:
         agent_name = subagent_cfg.get("name", "")
         if agent_name == "catbus":
             result = _run_lightweight_llm(
-                subagent_cfg, description, label,
-                model_config, project_root, event_queue,
+                subagent_cfg,
+                description,
+                label,
+                model_config,
+                project_root,
+                event_queue,
             )
         else:
             result = _run_subagent_in_process(
-                subagent_cfg, description, label,
-                model_config, project_root, event_queue,
+                subagent_cfg,
+                description,
+                label,
+                model_config,
+                project_root,
+                event_queue,
                 response_queue=response_queue,
                 auto_approve=auto_approve,
             )
         result_queue.put(result)
     except Exception as e:
-        result_queue.put(SubagentResult(final_text=f"Process error: {e}"))
+        result_queue.put(
+            SubagentResult(final_text=f"Process error: {e}")
+        )
     finally:
-        # Flush result_queue so parent can read the result
+        # Flush result_queue for parent to read
         try:
             result_queue.close()
             result_queue.join_thread()
         except Exception:
             pass
-        # Prevent event_queue from blocking exit
+        # Prevent event_queue blocking exit
         try:
             event_queue.cancel_join_thread()
         except Exception:
             pass
-        # Force immediate exit — LangGraph internal threads can hang on normal exit
+        # Force exit — LangGraph threads can hang
         os._exit(0)
 
 
@@ -801,17 +1001,18 @@ def _run_lightweight_llm(
     project_root: str,
     event_queue: mp.Queue,
 ) -> SubagentResult:
-    """Single LLM call with no agent loop or tools. Fast path for catbus planner.
+    """Single LLM call without agent loop or tools.
 
-    Just sends system_prompt + user message and returns the response.
+    Fast path for catbus planner. Sends
+    system_prompt + user message, returns response.
 
     Args:
-        subagent_cfg: Config dict containing "system_prompt" for the planner.
+        subagent_cfg: Config dict with "system_prompt".
         description: Task description to plan for.
         label: Unique label for this worker.
-        model_config: Dict with "model_name" and "provider" for model resolution.
-        project_root: Absolute path to the project root directory.
-        event_queue: Multiprocessing queue for streaming events to parent.
+        model_config: Dict with model_name/provider.
+        project_root: Absolute path to project root.
+        event_queue: Queue for streaming events.
 
     Returns:
         SubagentResult containing the planner's response text.
@@ -821,25 +1022,37 @@ def _run_lightweight_llm(
 
     def emit(event_type: str, **data):
         try:
-            event_queue.put_nowait(SubagentEvent(
-                label=label, event_type=event_type, data=data,
-            ))
+            event_queue.put_nowait(
+                SubagentEvent(
+                    label=label,
+                    event_type=event_type,
+                    data=data,
+                )
+            )
         except Exception:
             pass
 
     emit("tool_start", name="planning", summary="analyzing request")
 
-    model = _resolve_model(model_config["model_name"], model_config["provider"])
+    model = _resolve_model(
+        model_config["model_name"], model_config["provider"]
+    )
     system_prompt = subagent_cfg.get("system_prompt", "")
 
     messages = [
         SystemMessage(content=system_prompt),
-        HumanMessage(content=f"Working directory: {project_root}\n\n{description}"),
+        HumanMessage(
+            content=f"Working directory: {project_root}\n\n{description}"
+        ),
     ]
 
     try:
         response = model.invoke(messages)
-        text = response.content if isinstance(response.content, str) else str(response.content)
+        text = (
+            response.content
+            if isinstance(response.content, str)
+            else str(response.content)
+        )
         # Capture token usage from response metadata
         usage = getattr(response, "usage_metadata", None) or {}
         if not usage:
@@ -851,10 +1064,14 @@ def _run_lightweight_llm(
                 details = usage.get("prompt_tokens_details", {})
                 if isinstance(details, dict):
                     cached = details.get("cached_tokens", 0)
-            emit("tokens",
-                 input=usage.get("input_tokens", usage.get("prompt_tokens", 0)),
-                 output=usage.get("output_tokens", usage.get("completion_tokens", 0)),
-                 cached=cached)
+            emit(
+                "tokens",
+                input=usage.get("input_tokens", usage.get("prompt_tokens", 0)),
+                output=usage.get(
+                    "output_tokens", usage.get("completion_tokens", 0)
+                ),
+                cached=cached,
+            )
     except Exception as e:
         text = f"Planning error: {e}"
 
@@ -864,26 +1081,37 @@ def _run_lightweight_llm(
     return SubagentResult(final_text=text)
 
 
-TASK_AGENT_RULES = """
-## Rules
-- Execute the given task immediately — do NOT plan, do NOT create todos, do NOT delegate.
-- NEVER use the "task" tool. You do NOT have sub-agents. Do all work yourself directly.
-- Be concise — report what you did in one sentence when done.
-- Do NOT verify, review, or double-check your own work unless that IS your task.
-- STOP as soon as your assigned task is complete. Do not do extra work.
-
-## Error Handling
-- If a command fails, read the error output carefully and fix the root cause.
-- You may retry a failed command up to 3 times MAX. After 3 failures, STOP and report the error.
-- Do NOT keep retrying the same approach. If it failed twice, try a completely different approach.
-- NEVER loop endlessly — if you cannot fix it in 3 attempts, report what went wrong and stop.
-
-## Shell Commands
-- The `execute` tool runs commands from the project root directory.
-- Each execute call is a separate subprocess — `cd` does NOT persist between calls.
-- To run commands in a different directory, chain with `cd`: `cd ~/todo-app && npm test`
-- ALWAYS use `cd <target> && <command>` when working outside the project root.
-"""
+TASK_AGENT_RULES = (
+    "\n## Rules\n"
+    "- Execute the given task immediately — do NOT"
+    " plan, do NOT create todos, do NOT delegate.\n"
+    "- NEVER use the \"task\" tool. You do NOT have"
+    " sub-agents. Do all work yourself directly.\n"
+    "- Be concise — report what you did in one"
+    " sentence when done.\n"
+    "- Do NOT verify, review, or double-check your"
+    " own work unless that IS your task.\n"
+    "- STOP as soon as your assigned task is"
+    " complete. Do not do extra work.\n"
+    "\n## Error Handling\n"
+    "- If a command fails, read the error output"
+    " carefully and fix the root cause.\n"
+    "- You may retry a failed command up to 3 times"
+    " MAX. After 3 failures, STOP and report.\n"
+    "- Do NOT keep retrying the same approach. If it"
+    " failed twice, try a different approach.\n"
+    "- NEVER loop endlessly — if you cannot fix it"
+    " in 3 attempts, report what went wrong.\n"
+    "\n## Shell Commands\n"
+    "- The `execute` tool runs commands from the"
+    " project root directory.\n"
+    "- Each execute call is a separate subprocess"
+    " — `cd` does NOT persist between calls.\n"
+    "- To run commands in a different directory,"
+    " chain with `cd`: `cd ~/app && npm test`\n"
+    "- ALWAYS use `cd <target> && <command>` when"
+    " working outside the project root.\n"
+)
 
 
 def _run_subagent_in_process(
@@ -905,15 +1133,16 @@ def _run_subagent_in_process(
     - PatchToolCallsMiddleware (fix dangling tool calls)
 
     Excludes TodoList, SubAgent, Skills, Summarization middleware
-    that create_deep_agent() would auto-add (~3,000+ tokens saved per subagent).
+    that create_deep_agent() would auto-add
+    (~3,000+ tokens saved per subagent).
 
     Args:
-        subagent_cfg: Config dict with "name" and "system_prompt" for the character.
+        subagent_cfg: Config dict with name/prompt.
         description: Task description to execute.
         label: Unique label for this worker.
-        model_config: Dict with "model_name" and "provider" for model resolution.
-        project_root: Absolute path to the project root directory.
-        event_queue: Multiprocessing queue for streaming events to parent.
+        model_config: Dict with model_name/provider.
+        project_root: Absolute path to project root.
+        event_queue: Queue for streaming events.
 
     Returns:
         SubagentResult with final text, tools used, and files modified.
@@ -927,7 +1156,9 @@ def _run_subagent_in_process(
     from totoro.layers.stall_detector import StallDetectorMiddleware
     from langgraph.checkpoint.memory import MemorySaver
 
-    model = _resolve_model(model_config["model_name"], model_config["provider"])
+    model = _resolve_model(
+        model_config["model_name"], model_config["provider"]
+    )
 
     # Use character-specific system prompt + shared task rules
     character_prompt = subagent_cfg.get("system_prompt", "") + TASK_AGENT_RULES
@@ -935,8 +1166,9 @@ def _run_subagent_in_process(
 
     # Use home directory as root so subagents can freely work with any
     # user project (e.g. ~/todo-app) without cd workarounds.
-    # virtual_mode=False means absolute paths still work regardless of root_dir.
+    # virtual_mode=False: absolute paths work.
     from pathlib import Path
+
     home_dir = str(Path.home())
     backend = LocalShellBackend(
         root_dir=home_dir,
@@ -944,7 +1176,7 @@ def _run_subagent_in_process(
         inherit_env=True,
     )
 
-    # Minimal middleware — subagents do one focused task, no planning/delegation
+    # Minimal middleware — one focused task
     fs_middleware = FilesystemMiddleware(backend=backend)
 
     # Filter filesystem tools by agent role to reduce token overhead
@@ -952,12 +1184,14 @@ def _run_subagent_in_process(
     # tatsuo (reviewer): read + execute — no write, edit (~156 tokens saved)
     # satsuki, susuwatari: all tools (need full file I/O)
     _TOOL_PROFILES = {
-        "mei":     {"ls", "read_file", "glob", "grep"},
-        "tatsuo":  {"ls", "read_file", "glob", "grep", "execute"},
+        "mei": {"ls", "read_file", "glob", "grep"},
+        "tatsuo": {"ls", "read_file", "glob", "grep", "execute"},
     }
     allowed = _TOOL_PROFILES.get(character_name)
     if allowed is not None:
-        fs_middleware.tools = [t for t in fs_middleware.tools if t.name in allowed]
+        fs_middleware.tools = [
+            t for t in fs_middleware.tools if t.name in allowed
+        ]
 
     middleware = [
         fs_middleware,
@@ -966,21 +1200,30 @@ def _run_subagent_in_process(
         StallDetectorMiddleware(max_empty_turns=2),
     ]
 
-    # Add HITL middleware for agents with write/execute tools (not read-only mei)
-    if not auto_approve and response_queue is not None and character_name != "mei":
+    # Add HITL middleware (not read-only mei)
+    if (
+        not auto_approve
+        and response_queue is not None
+        and character_name != "mei"
+    ):
         from totoro.layers.subagent_hitl import SubagentHITLMiddleware
+
         hitl_tools = {"write_file": True, "edit_file": True, "execute": True}
         # Only intercept tools this agent actually has
         agent_tool_names = {t.name for t in fs_middleware.tools}
-        hitl_tools = {k: v for k, v in hitl_tools.items() if k in agent_tool_names}
+        hitl_tools = {
+            k: v for k, v in hitl_tools.items() if k in agent_tool_names
+        }
         if hitl_tools:
-            middleware.append(SubagentHITLMiddleware(
-                interrupt_on=hitl_tools,
-                event_queue=event_queue,
-                response_queue=response_queue,
-                label=label,
-                allow_patterns=_allow_patterns,
-            ))
+            middleware.append(
+                SubagentHITLMiddleware(
+                    interrupt_on=hitl_tools,
+                    event_queue=event_queue,
+                    response_queue=response_queue,
+                    label=label,
+                    allow_patterns=_allow_patterns,
+                )
+            )
 
     subagent = create_agent(
         model=model,
@@ -997,6 +1240,7 @@ def _run_subagent_in_process(
     # Provide filesystem context without biasing toward a specific directory.
     # The task description (with injected user request) guides where to work.
     from pathlib import Path as _Path
+
     user_msg = (
         f"Environment:\n"
         f"- Home: {_Path.home()}\n"
@@ -1010,26 +1254,35 @@ def _run_subagent_in_process(
     empty_turns = 0
     max_empty_turns = 3
     max_execution_seconds = 600  # 10 min absolute safety net
-    first_event_timeout = 300    # 5 min to get first response from API (accounts for rate limits)
+    first_event_timeout = (
+        300  # 5 min to get first response from API (accounts for rate limits)
+    )
     start_time = time.time()
     got_first_event = False
 
     def emit(event_type: str, **data):
         try:
-            event_queue.put_nowait(SubagentEvent(
-                label=label, event_type=event_type, data=data,
-            ))
+            event_queue.put_nowait(
+                SubagentEvent(
+                    label=label,
+                    event_type=event_type,
+                    data=data,
+                )
+            )
         except Exception:
             pass
 
     # Stream in a thread so we can detect API-level hangs
     import queue as _queue
+
     stream_queue: _queue.Queue = _queue.Queue(maxsize=100)
     stream_error: list = []
 
     def _stream_worker():
         try:
-            for event in subagent.stream(input_payload, config=config, stream_mode="updates"):
+            for event in subagent.stream(
+                input_payload, config=config, stream_mode="updates"
+            ):
                 stream_queue.put(event)
             stream_queue.put(None)  # sentinel: stream done
         except Exception as e:
@@ -1043,7 +1296,9 @@ def _run_subagent_in_process(
         while True:
             # Calculate timeout: shorter before first event, longer after
             if not got_first_event:
-                wait_timeout = max(0.1, first_event_timeout - (time.time() - start_time))
+                wait_timeout = max(
+                    0.1, first_event_timeout - (time.time() - start_time)
+                )
             else:
                 wait_timeout = 5.0
 
@@ -1051,14 +1306,31 @@ def _run_subagent_in_process(
                 event = stream_queue.get(timeout=wait_timeout)
             except _queue.Empty:
                 # Check for first-event timeout (API not responding)
-                if not got_first_event and (time.time() - start_time) > first_event_timeout:
-                    result.final_text += f"\n[API not responding after {first_event_timeout}s]"
-                    emit("error", text=f"API not responding after {first_event_timeout}s")
+                if (
+                    not got_first_event
+                    and (time.time() - start_time) > first_event_timeout
+                ):
+                    result.final_text += (
+                        f"\n[API not responding after {first_event_timeout}s]"
+                    )
+                    emit(
+                        "error",
+                        text=(
+                            f"API not responding after"
+                            f" {first_event_timeout}s"
+                        ),
+                    )
                     break
                 # Check absolute timeout
                 if time.time() - start_time > max_execution_seconds:
-                    result.final_text += f"\n[Subagent timed out after {max_execution_seconds}s]"
-                    emit("error", text=f"Timed out after {max_execution_seconds}s")
+                    result.final_text += (
+                        f"\n[Subagent timed out after"
+                        f" {max_execution_seconds}s]"
+                    )
+                    emit(
+                        "error",
+                        text=f"Timed out after {max_execution_seconds}s",
+                    )
                     break
                 continue
 
@@ -1072,7 +1344,9 @@ def _run_subagent_in_process(
 
             # Absolute safety net
             if time.time() - start_time > max_execution_seconds:
-                result.final_text += f"\n[Subagent timed out after {max_execution_seconds}s]"
+                result.final_text += (
+                    f"\n[Subagent timed out after {max_execution_seconds}s]"
+                )
                 emit("error", text=f"Timed out after {max_execution_seconds}s")
                 break
 
@@ -1096,17 +1370,29 @@ def _run_subagent_in_process(
                         usage = getattr(msg, "usage_metadata", None) or {}
                         if not usage:
                             meta = getattr(msg, "response_metadata", {})
-                            usage = meta.get("token_usage", meta.get("usage", {}))
+                            usage = meta.get(
+                                "token_usage", meta.get("usage", {})
+                            )
                         if usage:
                             cached = usage.get("cache_read_input_tokens", 0)
                             if not cached:
-                                details = usage.get("prompt_tokens_details", {})
+                                details = usage.get(
+                                    "prompt_tokens_details", {}
+                                )
                                 if isinstance(details, dict):
                                     cached = details.get("cached_tokens", 0)
-                            emit("tokens",
-                                 input=usage.get("input_tokens", usage.get("prompt_tokens", 0)),
-                                 output=usage.get("output_tokens", usage.get("completion_tokens", 0)),
-                                 cached=cached)
+                            emit(
+                                "tokens",
+                                input=usage.get(
+                                    "input_tokens",
+                                    usage.get("prompt_tokens", 0),
+                                ),
+                                output=usage.get(
+                                    "output_tokens",
+                                    usage.get("completion_tokens", 0),
+                                ),
+                                cached=cached,
+                            )
 
                         tool_calls = getattr(msg, "tool_calls", [])
                         for tc in tool_calls:
@@ -1114,9 +1400,13 @@ def _run_subagent_in_process(
                             tc_args = tc.get("args", {})
                             # Emit verbose tool info: name + key arg summary
                             tool_summary = _format_tool_brief(tc_name, tc_args)
-                            # Pass key args so status tracker can show file names
-                            emit("tool_start", name=tc_name, summary=tool_summary,
-                                 args=_extract_key_args(tc_name, tc_args))
+                            # Key args for status tracker
+                            emit(
+                                "tool_start",
+                                name=tc_name,
+                                summary=tool_summary,
+                                args=_extract_key_args(tc_name, tc_args),
+                            )
                             result.tools_used.append({"name": tc_name})
 
                             if tc_name in ("edit_file", "write_file"):
@@ -1124,7 +1414,9 @@ def _run_subagent_in_process(
                                 if tc_id:
                                     pending_ops[tc_id] = {
                                         "name": tc_name,
-                                        "file_path": tc_args.get("file_path", ""),
+                                        "file_path": tc_args.get(
+                                            "file_path", ""
+                                        ),
                                     }
 
                         if tool_calls:
@@ -1134,7 +1426,11 @@ def _run_subagent_in_process(
 
                         content = getattr(msg, "content", "")
                         if content:
-                            text = content if isinstance(content, str) else str(content)
+                            text = (
+                                content
+                                if isinstance(content, str)
+                                else str(content)
+                            )
                             if text.strip():
                                 result.final_text = text
                                 emit("ai_text", text=text[:500])
@@ -1147,16 +1443,29 @@ def _run_subagent_in_process(
 
                         # Emit verbose result preview
                         result_preview = tool_content[:200].replace("\n", " ")
-                        emit("tool_end", name=tool_name, is_error=is_error,
-                             result=result_preview)
+                        emit(
+                            "tool_end",
+                            name=tool_name,
+                            is_error=is_error,
+                            result=result_preview,
+                        )
 
-                        if tool_name in ("write_file", "edit_file") and not is_error:
+                        if (
+                            tool_name in ("write_file", "edit_file")
+                            and not is_error
+                        ):
                             if tool_call_id and tool_call_id in pending_ops:
                                 op = pending_ops.pop(tool_call_id)
                                 file_path = op.get("file_path", "")
                                 if file_path:
                                     result.files_modified.append(file_path)
-                                emit("diff", text=f"● {op['name']}({os.path.basename(file_path)})")
+                                emit(
+                                    "diff",
+                                    text=(
+                                        f"● {op['name']}"
+                                        f"({os.path.basename(file_path)})"
+                                    ),
+                                )
 
                 if empty_turns >= max_empty_turns:
                     result.final_text += "\n[Sub-agent stalled]"
@@ -1247,14 +1556,18 @@ def _format_tool_brief(name: str, args: dict) -> str:
 
 # ─── Event collector (runs in parent process, main thread) ───
 
-def _event_collector(event_queue: mp.Queue, halt: threading.Event,
-                     hitl_pending: queue.Queue | None = None):
+
+def _event_collector(
+    event_queue: mp.Queue,
+    halt: threading.Event,
+    hitl_pending: queue.Queue | None = None,
+):
     """Single thread that consumes events from child processes.
 
     Args:
-        event_queue: Multiprocessing queue receiving SubagentEvents from workers.
-        halt: Threading event to signal this collector to stop.
-        hitl_pending: Threading queue to relay HITL requests to the TUI thread.
+        event_queue: Queue receiving SubagentEvents.
+        halt: Event to signal collector to stop.
+        hitl_pending: Queue for HITL requests to TUI.
     """
     while not halt.is_set():
         try:
@@ -1287,7 +1600,7 @@ def _event_collector(event_queue: mp.Queue, halt: threading.Event,
                 _tracker._mark_dirty()
 
 
-def _handle_hitl_no_curses(event: 'SubagentEvent', response_holders: dict):
+def _handle_hitl_no_curses(event: "SubagentEvent", response_holders: dict):
     """Handle HITL request without curses (non-tty or fallback).
 
     Args:
@@ -1301,14 +1614,24 @@ def _handle_hitl_no_curses(event: 'SubagentEvent', response_holders: dict):
     for tr in tool_requests:
         tool_name = tr.get("name", "?")
         tool_args = tr.get("args", {})
-        print(f"\n  \033[33m[APPROVAL REQUIRED]\033[0m \033[1m{label}\033[0m → \033[1m{tool_name}\033[0m")
+        print(
+            f"\n  \033[33m[APPROVAL REQUIRED]\033[0m"
+            f" \033[1m{label}\033[0m"
+            f" → \033[1m{tool_name}\033[0m"
+        )
         if isinstance(tool_args, dict):
             for k, v in tool_args.items():
                 v_str = str(v)
                 if len(v_str) > 200:
                     v_str = v_str[:200] + "..."
                 print(f"    {k}: {v_str}")
-        print(f"  \033[1m(a)\033[0mpprove / \033[1m(A)\033[0mpprove all / \033[1m(r)\033[0meject / \033[1m(e)\033[0mdit / \033[1m(x)\033[0m abort ?")
+        print(
+            "  \033[1m(a)\033[0mpprove / "
+            "\033[1m(A)\033[0mpprove all / "
+            "\033[1m(r)\033[0meject / "
+            "\033[1m(e)\033[0mdit / "
+            "\033[1m(x)\033[0m abort ?"
+        )
 
         try:
             choice = input("  > ").strip()
@@ -1320,7 +1643,9 @@ def _handle_hitl_no_curses(event: 'SubagentEvent', response_holders: dict):
             decisions.append({"type": "approve_all"})
             break
         elif choice.lower() in ("r", "reject", "n", "no"):
-            decisions.append({"type": "reject", "message": f"User rejected {tool_name}"})
+            decisions.append(
+                {"type": "reject", "message": f"User rejected {tool_name}"}
+            )
         elif choice.lower() in ("e", "edit"):
             try:
                 edit_instruction = input("  How to change? > ").strip()
@@ -1331,13 +1656,21 @@ def _handle_hitl_no_curses(event: 'SubagentEvent', response_holders: dict):
                 decisions.append({"type": "approve"})
             else:
                 edited_args = dict(tool_args)
-                if "=" in edit_instruction and " " not in edit_instruction.split("=")[0]:
+                if (
+                    "=" in edit_instruction
+                    and " " not in edit_instruction.split("=")[0]
+                ):
                     key, val = edit_instruction.split("=", 1)
                     edited_args[key.strip()] = val.strip()
-                decisions.append({
-                    "type": "edit",
-                    "edited_action": {"name": tool_name, "args": edited_args},
-                })
+                decisions.append(
+                    {
+                        "type": "edit",
+                        "edited_action": {
+                            "name": tool_name,
+                            "args": edited_args,
+                        },
+                    }
+                )
         elif choice.lower() in ("x", "abort", "q"):
             decisions.append({"type": "reject", "message": "Aborted"})
             break
@@ -1353,12 +1686,17 @@ def _handle_hitl_no_curses(event: 'SubagentEvent', response_holders: dict):
 
     # Update pane status back to running
     if _pane_manager:
-        _pane_manager.update_subagent(SubagentEvent(
-            label=label, event_type="hitl_response", data={},
-        ))
+        _pane_manager.update_subagent(
+            SubagentEvent(
+                label=label,
+                event_type="hitl_response",
+                data={},
+            )
+        )
 
 
 # ─── Background render thread ───
+
 
 class RenderThread(threading.Thread):
     """Daemon thread that periodically refreshes the status dashboard."""

@@ -3,6 +3,7 @@
 Uses a lightweight LLM for intelligent summarization when available,
 with a fast heuristic fallback when no model is provided.
 """
+
 import logging
 from typing import Any
 
@@ -55,7 +56,9 @@ class ContextCompactor:
         self._emergency = emergency_threshold
         self._model = model
 
-    def check_and_compact(self, messages: list, model_context_window: int = 200000) -> list | None:
+    def check_and_compact(
+        self, messages: list, model_context_window: int = 200000
+    ) -> list | None:
         """Check usage and compact if needed.
 
         Args:
@@ -81,13 +84,19 @@ class ContextCompactor:
     def _auto_compact(self, messages: list) -> list:
         mid = len(messages) // 2
         summary = self._summarize(messages[:mid])
-        return [SystemMessage(content=f"[Compacted context]\n{summary}"), *messages[mid:]]
+        return [
+            SystemMessage(content=f"[Compacted context]\n{summary}"),
+            *messages[mid:],
+        ]
 
     def _reactive_compact(self, messages: list) -> list:
         keep = max(len(messages) // 3, 10)
         summary = self._summarize(messages[:-keep])
         recent = [_truncate_tool_result(m) for m in messages[-keep:]]
-        return [SystemMessage(content=f"[Compacted context]\n{summary}"), *recent]
+        return [
+            SystemMessage(content=f"[Compacted context]\n{summary}"),
+            *recent,
+        ]
 
     def _emergency_compact(self, messages: list) -> list:
         summary = self._summarize(messages[:-5], emergency=True)
@@ -97,7 +106,7 @@ class ContextCompactor:
         ]
 
     def _summarize(self, messages: list, emergency: bool = False) -> str:
-        """Summarize messages using LLM if available, otherwise heuristic fallback.
+        """Summarize messages using LLM or heuristic.
 
         Args:
             messages: Messages to summarize.
@@ -110,7 +119,9 @@ class ContextCompactor:
             try:
                 return self._llm_summarize(messages, emergency)
             except Exception as e:
-                logger.warning(f"LLM summarization failed, using fallback: {e}")
+                logger.warning(
+                    f"LLM summarization failed, using fallback: {e}"
+                )
         return _heuristic_summarize(messages)
 
     def _llm_summarize(self, messages: list, emergency: bool = False) -> str:
@@ -129,7 +140,9 @@ class ContextCompactor:
 
         # Truncate input to avoid exceeding the lightweight model's context
         if len(conversation_text) > 12000:
-            conversation_text = conversation_text[:12000] + "\n... (rest omitted)"
+            conversation_text = (
+                conversation_text[:12000] + "\n... (rest omitted)"
+            )
 
         template = _EMERGENCY_SUMMARY_PROMPT if emergency else _SUMMARY_PROMPT
         prompt = template.format(conversation=conversation_text)
@@ -153,8 +166,11 @@ def _heuristic_summarize(messages: list) -> str:
         if isinstance(content, list):
             # Handle multi-block content (e.g. tool_use blocks)
             text_parts = [
-                b["text"] if isinstance(b, dict) and b.get("type") == "text" else str(b)
-                for b in content if isinstance(b, (str, dict))
+                b["text"]
+                if isinstance(b, dict) and b.get("type") == "text"
+                else str(b)
+                for b in content
+                if isinstance(b, (str, dict))
             ]
             content = " ".join(text_parts)
         if content and role in ("human", "ai"):
@@ -177,8 +193,11 @@ def _format_for_summary(messages: list) -> str:
         content = getattr(m, "content", "")
         if isinstance(content, list):
             text_parts = [
-                b["text"] if isinstance(b, dict) and b.get("type") == "text" else ""
-                for b in content if isinstance(b, (str, dict))
+                b["text"]
+                if isinstance(b, dict) and b.get("type") == "text"
+                else ""
+                for b in content
+                if isinstance(b, (str, dict))
             ]
             content = " ".join(text_parts)
         if not content:
@@ -205,6 +224,7 @@ def _truncate_tool_result(message):
     content = getattr(message, "content", None)
     if hasattr(message, "tool_call_id") and content and len(content) > 2000:
         from copy import copy
+
         msg = copy(message)
         msg.content = content[:2000] + "\n... (truncated)"
         return msg
@@ -212,7 +232,7 @@ def _truncate_tool_result(message):
 
 
 class ContextCompactionMiddleware(AgentMiddleware):
-    """Middleware wrapper for ContextCompactor — runs before each model call."""
+    """Middleware wrapper for ContextCompactor."""
 
     def __init__(
         self,
@@ -232,7 +252,10 @@ class ContextCompactionMiddleware(AgentMiddleware):
             model: Optional lightweight LLM for intelligent summarization.
         """
         self._compactor = ContextCompactor(
-            auto_threshold, reactive_threshold, emergency_threshold, model=model,
+            auto_threshold,
+            reactive_threshold,
+            emergency_threshold,
+            model=model,
         )
         self._context_window = model_context_window
 
@@ -250,8 +273,14 @@ class ContextCompactionMiddleware(AgentMiddleware):
         Returns:
             Dict with compacted messages, or None if no compaction needed.
         """
-        messages = state.get("messages", []) if isinstance(state, dict) else getattr(state, "messages", [])
-        compacted = self._compactor.check_and_compact(messages, self._context_window)
+        messages = (
+            state.get("messages", [])
+            if isinstance(state, dict)
+            else getattr(state, "messages", [])
+        )
+        compacted = self._compactor.check_and_compact(
+            messages, self._context_window
+        )
         if compacted is not None:
             import sys
             from totoro.layers._token_utils import estimate_tokens
@@ -260,9 +289,11 @@ class ContextCompactionMiddleware(AgentMiddleware):
             new = len(compacted)
             ratio = estimate_tokens(messages) / self._context_window * 100
             print(
-                f"\033[38;2;96;80;58m  [auto-compact] {original} → {new} messages "
+                f"\033[38;2;96;80;58m  [auto-compact]"
+                f" {original} → {new} messages "
                 f"(context was {ratio:.0f}% full)\033[0m",
-                file=sys.stderr, flush=True,
+                file=sys.stderr,
+                flush=True,
             )
             return {"messages": compacted}
         return None

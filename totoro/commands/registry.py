@@ -1,9 +1,16 @@
 """Slash command registry and handler."""
+
 import time
 from totoro.colors import (
-    RESET as _R, BOLD as _B, DIM as _D,
-    BLUE as _BL, AMBER as _AM, AMBER_LT as _AL,
-    COPPER as _CP, BODY as _BD, SECONDARY as _SC,
+    RESET as _R,
+    BOLD as _B,
+    DIM as _D,
+    BLUE as _BL,
+    AMBER as _AM,
+    AMBER_LT as _AL,
+    COPPER as _CP,
+    BODY as _BD,
+    SECONDARY as _SC,
 )
 
 # These are injected by CLI after agent creation
@@ -55,20 +62,20 @@ def set_skill_manager(manager):
 
 # Command metadata for autocomplete and menu
 COMMAND_LIST = [
-    ("/help",     "Show help message"),
-    ("/init",     "Scan project & generate TOTORO.md context"),
-    ("/model",    "Show or switch model"),
-    ("/mode",     "Cycle mode (default → auto-approve → plan-only)"),
-    ("/new",      "Start a new session (e.g. /new fix login bug)"),
-    ("/clear",    "Same as /new"),
-    ("/session",  "Show/switch session (e.g. /session 2)"),
+    ("/help", "Show help message"),
+    ("/init", "Scan project & generate TOTORO.md context"),
+    ("/model", "Show or switch model"),
+    ("/mode", "Cycle mode (default → auto-approve → plan-only)"),
+    ("/new", "Start a new session (e.g. /new fix login bug)"),
+    ("/clear", "Same as /new"),
+    ("/session", "Show/switch session (e.g. /session 2)"),
     ("/sessions", "List all sessions with numbers"),
-    ("/compact",  "Force context compaction"),
-    ("/memory",   "Show/clear memories"),
-    ("/skill",    "Manage skills (list/add/install/remove/reload)"),
-    ("/tasks",    "Show active sub-agent tasks"),
-    ("/status",   "Show agent status"),
-    ("/exit",     "Exit the CLI"),
+    ("/compact", "Force context compaction"),
+    ("/memory", "Show/clear memories"),
+    ("/skill", "Manage skills (list/add/install/remove/reload)"),
+    ("/tasks", "Show active sub-agent tasks"),
+    ("/status", "Show agent status"),
+    ("/exit", "Exit the CLI"),
 ]
 
 
@@ -81,7 +88,9 @@ def get_command_names() -> list[str]:
     return [cmd for cmd, _ in COMMAND_LIST]
 
 
-def handle_slash_command(user_input: str, agent, invoke_config: dict) -> str | None:
+def handle_slash_command(
+    user_input: str, agent, invoke_config: dict
+) -> str | None:
     """Parse and execute a slash command.
 
     Args:
@@ -122,6 +131,7 @@ def handle_slash_command(user_input: str, agent, invoke_config: dict) -> str | N
 
 def _cmd_help(args, agent, config) -> str:
     from totoro.input import format_mode_help
+
     mode_help = format_mode_help()
     return f"""{_B}Available commands:{_R}
   /help              Show this help message
@@ -155,7 +165,11 @@ def _cmd_init(args, agent, config) -> str:
     skill_paths = [
         Path.cwd() / ".totoro" / "skills" / "init" / "SKILL.md",
         Path.home() / ".totoro" / "skills" / "init" / "SKILL.md",
-        Path(__file__).resolve().parent.parent.parent / "built-in" / "skills" / "init" / "SKILL.md",
+        Path(__file__).resolve().parent.parent.parent
+        / "built-in"
+        / "skills"
+        / "init"
+        / "SKILL.md",
     ]
     skill_content = None
     for p in skill_paths:
@@ -165,7 +179,7 @@ def _cmd_init(args, agent, config) -> str:
             if text.startswith("---"):
                 end = text.find("---", 3)
                 if end > 0:
-                    skill_content = text[end + 3:].strip()
+                    skill_content = text[end + 3 :].strip()
                     break
             skill_content = text.strip()
             break
@@ -183,18 +197,22 @@ def _cmd_exit(args, agent, config) -> str:
 
 def _cmd_new(args, agent, config) -> str:
     from totoro.status import reset_session_tokens
+
     reset_session_tokens()
     description = args.strip()
     new_session_id = f"session-{int(time.time())}"
     config["configurable"]["thread_id"] = new_session_id
     if _session_manager:
-        _session_manager.create_session(new_session_id, description=description)
+        _session_manager.create_session(
+            new_session_id, description=description
+        )
     desc = f" — {description}" if description else ""
     return f"{_AL}New session:{_R} {new_session_id}{desc}"
 
 
 def _cmd_model(args, agent, config) -> str:
     from totoro.config.setup import _PROVIDER_MODELS
+
     model_name = _agent_config.model if _agent_config else "unknown"
     provider = _agent_config.provider if _agent_config else "unknown"
 
@@ -243,9 +261,17 @@ def _cmd_model(args, agent, config) -> str:
                     if selected == model_name:
                         return f"Already using: {model_name}"
                     return f"__model_change__:{selected}"
-                print(f"  {_CP}Enter a number (1-{len(models)}) or 'c' for custom model.{_R}")
+                print(
+                    f"  {_CP}Enter a number"
+                    f" (1-{len(models)})"
+                    f" or 'c' for custom.{_R}"
+                )
             except ValueError:
-                print(f"  {_CP}Enter a number (1-{len(models)}) or 'c' for custom model.{_R}")
+                print(
+                    f"  {_CP}Enter a number"
+                    f" (1-{len(models)})"
+                    f" or 'c' for custom.{_R}"
+                )
             except (EOFError, KeyboardInterrupt):
                 return f"Keeping current model: {model_name}"
 
@@ -335,13 +361,18 @@ def _switch_session(target: str, agent, config) -> str:
                 return f"Ambiguous — multiple matches: {ids}"
 
     if target_session is None:
-        return f"Session not found: {target}. Use /sessions to list available sessions."
+        return (
+            f"Session not found: {target}."
+            " Use /sessions to list available sessions."
+        )
 
     if target_session.session_id == current_id:
         return f"Already on session: {current_id}"
 
     # Verify state exists in checkpointer and get messages
-    target_config = _session_manager.get_invoke_config(target_session.session_id)
+    target_config = _session_manager.get_invoke_config(
+        target_session.session_id
+    )
     messages = []
     try:
         state = agent.get_state(target_config)
@@ -355,7 +386,11 @@ def _switch_session(target: str, agent, config) -> str:
     config["configurable"]["thread_id"] = target_session.session_id
 
     # Build output with recent conversation history
-    desc = f" — {target_session.description}" if target_session.description else ""
+    desc = (
+        f" — {target_session.description}"
+        if target_session.description
+        else ""
+    )
     lines = [
         f"{_AL}Switched to session:{_R} {target_session.session_id}{desc}",
         f"  Turns: {target_session.turn_count} · Messages: {msg_count}",
@@ -390,8 +425,11 @@ def _replay_recent_messages(messages: list, max_pairs: int = 5) -> str:
         content = getattr(msg, "content", "")
         if isinstance(content, list):
             text_parts = [
-                b["text"] if isinstance(b, dict) and b.get("type") == "text" else ""
-                for b in content if isinstance(b, (str, dict))
+                b["text"]
+                if isinstance(b, dict) and b.get("type") == "text"
+                else ""
+                for b in content
+                if isinstance(b, (str, dict))
             ]
             content = " ".join(text_parts)
         if not content or not isinstance(content, str) or not content.strip():
@@ -399,7 +437,7 @@ def _replay_recent_messages(messages: list, max_pairs: int = 5) -> str:
         display_msgs.append((role, content.strip()))
 
     # Take last N*2 messages (N pairs)
-    recent = display_msgs[-(max_pairs * 2):]
+    recent = display_msgs[-(max_pairs * 2) :]
     if not recent:
         return ""
 
@@ -442,14 +480,27 @@ def _cmd_compact(args, agent, config) -> str:
         if state and state.values:
             messages = state.values.get("messages", [])
             from totoro.layers.context_compaction import ContextCompactor
+
             compactor = ContextCompactor()
             # Force compaction by using a low threshold
-            total_chars = sum(len(getattr(m, "content", str(m)) or "") for m in messages)
+            total_chars = sum(
+                len(getattr(m, "content", str(m)) or "") for m in messages
+            )
             token_est = total_chars // 4
-            result = compactor.check_and_compact(messages, model_context_window=max(token_est + 1, 1000))
+            result = compactor.check_and_compact(
+                messages, model_context_window=max(token_est + 1, 1000)
+            )
             if result:
-                return f"Compacted {len(messages)} messages → {len(result)} messages (~{token_est} tokens)"
-            return f"No compaction needed ({len(messages)} messages, ~{token_est} tokens)"
+                return (
+                    f"Compacted {len(messages)} messages"
+                    f" → {len(result)} messages"
+                    f" (~{token_est} tokens)"
+                )
+            return (
+                f"No compaction needed"
+                f" ({len(messages)} messages,"
+                f" ~{token_est} tokens)"
+            )
     except Exception as e:
         return f"Compaction error: {e}"
 
@@ -470,7 +521,11 @@ def _cmd_memory(args, agent, config) -> str:
             idx = int(subcmd.split()[-1])
             removed = _auto_dream.remove_memory_by_index(idx)
             if removed:
-                return f"Removed: [{removed['type']}] {removed['name']}: {removed['content'][:60]}"
+                return (
+                    f"Removed: [{removed['type']}]"
+                    f" {removed['name']}:"
+                    f" {removed['content'][:60]}"
+                )
             return f"No memory at index {idx}."
         except ValueError:
             return "Usage: /memory remove <number>"
@@ -480,8 +535,16 @@ def _cmd_memory(args, agent, config) -> str:
         removed_count = 0
         store = _auto_dream._store
         all_entries = store.get_all()
-        skip_patterns = ["new-project", "project-location", "project-domain", "tech-stack",
-                         "todo-app", "cafe-kiosk", "totoro-calc", "totoro-code"]
+        skip_patterns = [
+            "new-project",
+            "project-location",
+            "project-domain",
+            "tech-stack",
+            "todo-app",
+            "cafe-kiosk",
+            "totoro-calc",
+            "totoro-code",
+        ]
         for entry in all_entries:
             if entry["type"] == "domain":
                 name = entry["name"]
@@ -507,7 +570,6 @@ def _cmd_skill(args, agent, config) -> str:
     if subcmd == "list" or subcmd == "ls":
         return f"{_B}Skills:{_R}\n{_skill_manager.format_list()}"
 
-
     if subcmd == "add":
         return _skill_add_interactive(subargs)
 
@@ -515,8 +577,11 @@ def _cmd_skill(args, agent, config) -> str:
         if not subargs:
             return (
                 "Usage:\n"
-                "  /skill install <url>                      Install single SKILL.md\n"
-                "  /skill install <repo-url> --skill <name>  Install skill from GitHub repo"
+                "  /skill install <url>"
+                "             Install SKILL.md\n"
+                "  /skill install <repo-url>"
+                " --skill <name>"
+                "  Install from repo"
             )
         # Parse --skill flag
         skill_name = ""
@@ -542,12 +607,13 @@ def _cmd_skill(args, agent, config) -> str:
 
     return (
         f"{_B}Skill commands:{_R}\n"
-        "  /skill list                                Show installed skills\n"
-        "  /skill add <name>                          Create a new skill interactively\n"
-        "  /skill install <url>                       Install single SKILL.md\n"
-        "  /skill install <repo-url> --skill <name>   Install skill from GitHub repo\n"
-        "  /skill remove <name>                       Remove a skill\n"
-        "  /skill reload                              Reload skills into current session"
+        "  /skill list              Show installed\n"
+        "  /skill add <name>        Create skill\n"
+        "  /skill install <url>     Install SKILL.md\n"
+        "  /skill install <repo>"
+        " --skill <name>\n"
+        "  /skill remove <name>     Remove a skill\n"
+        "  /skill reload            Reload skills"
     )
 
 
@@ -566,8 +632,13 @@ def _skill_add_interactive(name: str) -> str:
 
     try:
         description = input("  Description: ").strip()
-        tools = input("  Allowed tools (comma-separated, Enter to skip): ").strip()
-        scope = input("  Scope (project/global) [project]: ").strip().lower() or "project"
+        tools = input(
+            "  Allowed tools (comma-separated, Enter to skip): "
+        ).strip()
+        scope = (
+            input("  Scope (project/global) [project]: ").strip().lower()
+            or "project"
+        )
 
         print("  Instructions (end with empty line):")
         lines = []
@@ -583,7 +654,9 @@ def _skill_add_interactive(name: str) -> str:
         return "No instructions provided. Cancelled."
 
     content = "\n".join(lines) + "\n"
-    path = _skill_manager.add_skill(name, description or name, content, tools, scope)
+    path = _skill_manager.add_skill(
+        name, description or name, content, tools, scope
+    )
     return f"{_AL}✓{_R} Saved to {path}"
 
 
@@ -621,12 +694,25 @@ def _cmd_status(args, agent, config) -> str:
         state = agent.get_state(config)
         if state and state.values:
             messages = state.values.get("messages", [])
-            total_chars = sum(len(getattr(m, "content", str(m)) or "") for m in messages)
+            total_chars = sum(
+                len(getattr(m, "content", str(m)) or "") for m in messages
+            )
             token_est = total_chars // 4
-            human_msgs = sum(1 for m in messages if getattr(m, "type", None) == "human")
-            ai_msgs = sum(1 for m in messages if getattr(m, "type", None) == "ai")
-            tool_msgs = sum(1 for m in messages if getattr(m, "type", None) == "tool")
-            lines.append(f"  Messages: {len(messages)} (human: {human_msgs}, ai: {ai_msgs}, tool: {tool_msgs})")
+            human_msgs = sum(
+                1 for m in messages if getattr(m, "type", None) == "human"
+            )
+            ai_msgs = sum(
+                1 for m in messages if getattr(m, "type", None) == "ai"
+            )
+            tool_msgs = sum(
+                1 for m in messages if getattr(m, "type", None) == "tool"
+            )
+            lines.append(
+                f"  Messages: {len(messages)}"
+                f" (human: {human_msgs},"
+                f" ai: {ai_msgs},"
+                f" tool: {tool_msgs})"
+            )
             lines.append(f"  Est. context tokens: ~{token_est:,}")
             # Context usage percentage (assuming 200k window)
             context_window = 200_000
@@ -640,10 +726,15 @@ def _cmd_status(args, agent, config) -> str:
 
     # Session-level API token usage
     from totoro.status import get_session_tokens
+
     session_tok = get_session_tokens()
     api_total = session_tok["input"] + session_tok["output"]
     if api_total > 0:
-        lines.append(f"  API tokens: {api_total:,} (in: {session_tok['input']:,}, out: {session_tok['output']:,})")
+        lines.append(
+            f"  API tokens: {api_total:,}"
+            f" (in: {session_tok['input']:,},"
+            f" out: {session_tok['output']:,})"
+        )
 
     # Memory count
     if _auto_dream:

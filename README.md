@@ -6,11 +6,14 @@
 
 - **멀티 프로바이더** — OpenRouter, Anthropic, OpenAI, vLLM 지원 + 런타임 모델 전환
 - **병렬 서브에이전트** — catbus(플래너), satsuki(코더), mei(연구원), tatsuo(리뷰어), susuwatari(마이크로) 동시 실행
-- **실시간 상태 표시** — 서브에이전트 진행 상황, 도구 호출, 토큰 사용량 라이브 표시 (터미널 너비 자동 맞춤)
+- **실시간 상태 표시** — Split-pane TUI: 좌측에 서브에이전트 태스크 목표/설명 (최대 2줄), 우측에 Claude Code 스타일 도구 출력 (`● Write(file)`, `● Edit(file)`, `● Bash(cmd)`, `● Read(file)`). ANSI 이스케이프 자동 제거, ⏸ 승인 대기 상태 표시
 - **Markdown 렌더링** — AI 응답의 마크다운을 ANSI 스타일로 변환 (헤더, 볼드, 코드 블록, 리스트)
 - **세션 영구 저장** — SQLite 기반 체크포인터로 프로세스 재시작 후에도 세션 복원
 - **인라인 자동완성** — `/` 입력 시 드롭다운 메뉴로 커맨드 선택 (prompt_toolkit)
-- **HITL (Human-in-the-Loop)** — 위험한 도구 실행 전 승인/거부/수정 선택
+- **HITL (Human-in-the-Loop)** — 위험한 도구 실행 전 승인/거부/수정 선택. 서브에이전트는 IPC 큐 기반 SubagentHITLMiddleware로 부모 프로세스에 승인 요청. "Approve All" 옵션으로 세션 전체 자동 승인 가능
+- **권한 패턴** — `.totoro/settings.json`의 `permissions.allow` 패턴으로 도구/명령/파일 자동 승인 (`"mkdir"`, `"npm *"`, `"*.py"`, `"*"`)
+- **Tatsuo 검증 순서** — tatsuo(리뷰어)는 worker 에이전트 완료 후 순차 실행. 실패 시 satsuki 수정 → tatsuo 재검증 자동 재시도 루프 (최대 3회)
+- **API 타임아웃 & 에러 처리** — 첫 이벤트 타임아웃 3분(메인)/5분(서브에이전트), 절대 타임아웃 10분/서브에이전트. 에러 분류(rate limit, auth, network, timeout) 및 Ctrl+C 안전 처리
 - **Stall Detection** — 에이전트가 멈추면 4단계 자동 복구 (넛지 → 모델전환 → 질문 → 중단)
 - **Auto-Dream Memory** — 대화에서 중요 정보를 자동 추출하여 `~/.totoro/character.md`에 장기 기억 저장
 - **프로젝트 컨텍스트** — `/init`으로 프로젝트 스캔 후 `TOTORO.md` 자동 생성
@@ -203,8 +206,10 @@ catbus만 디스패치하면 자동으로 플랜 생성 → 실행 에이전트 
 1. orchestrate_tool → catbus (플랜 생성, SLM 사용)
 2. catbus 플랜 JSON 파싱
 3. 실행 에이전트에 원래 유저 요청 + 플랜 컨텍스트 + 환경 정보 자동 주입
-4. 병렬 실행 (코드 변경 플랜은 반드시 tatsuo 검증 포함)
-5. 서브에이전트 요약 + 수정 파일 목록 출력 → 결과 반환
+4. worker 에이전트 병렬 실행 (satsuki, mei, susuwatari 등)
+5. worker 완료 후 tatsuo(리뷰어) 순차 실행 — 검증/테스트
+6. tatsuo가 실패 감지 시 → satsuki 수정 → tatsuo 재검증 (최대 3회 자동 재시도)
+7. 서브에이전트 요약 + 수정 파일 목록 출력 → 결과 반환
 ```
 
 ## HITL (Human-in-the-Loop)
@@ -214,9 +219,25 @@ catbus만 디스패치하면 자동으로 플랜 생성 → 실행 에이전트 
 ```
 [APPROVAL REQUIRED] execute
   command: npm install express
-  (a)pprove / (r)eject / (e)dit ?
+  (a)pprove / (A)pprove all / (r)eject / (e)dit ?
   >
 ```
+
+서브에이전트에서는 `SubagentHITLMiddleware`가 IPC 큐를 통해 부모 프로세스에 승인을 요청합니다.
+부모 TUI는 curses를 일시 해제하고 승인 프롬프트를 표시하며, 대기 중인 요청을 일괄 처리합니다.
+"Approve All"(A)은 세션 전체에 적용되어 이후 모든 서브에이전트의 도구 실행을 자동 승인합니다.
+
+### 권한 패턴 (.totoro/settings.json)
+
+```json
+{
+  "permissions": {
+    "allow": ["mkdir", "npm *", "write_file", "*.py", "*"]
+  }
+}
+```
+
+패턴 매칭: 도구 이름, 명령어 첫 단어, 파일 glob 패턴을 지원합니다.
 
 ## 도구
 
@@ -260,7 +281,8 @@ catbus만 디스패치하면 자동으로 플랜 생성 → 실행 에이전트 
 | 8 | StallDetectorMiddleware | 에이전트 정체 감지/복구 |
 | 9 | AutoDreamMiddleware | 장기 기억 자동 추출 |
 | 10 | AnthropicPromptCachingMiddleware | 프롬프트 캐싱 |
-| 11 | HumanInTheLoopMiddleware | HITL 인터럽트 |
+| 11 | HumanInTheLoopMiddleware | HITL 인터럽트 (메인 에이전트) |
+| 12 | SubagentHITLMiddleware | IPC 큐 기반 서브에이전트 HITL (서브에이전트 전용) |
 
 ## 프로젝트 컨텍스트 (/init)
 
@@ -304,7 +326,8 @@ totoro/
 │   ├── context_compaction.py # LLM 기반 3단계 컨텍스트 압축
 │   ├── auto_dream.py         # 장기 기억 추출 (비례 배분 주입)
 │   ├── stall_detector.py     # 4단계 정체 감지/복구
-│   └── sanitize.py           # surrogate 문자 정리
+│   ├── sanitize.py           # surrogate 문자 정리
+│   └── subagent_hitl.py      # IPC 큐 기반 서브에이전트 HITL 미들웨어
 ├── commands/registry.py      # 슬래시 커맨드 (16개)
 ├── config/                   # Pydantic 설정 스키마 + 로더
 ├── session/                  # 세션 관리 + 복원

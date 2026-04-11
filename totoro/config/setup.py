@@ -8,9 +8,16 @@ from pathlib import Path
 
 # ANSI colors (palette-based)
 from totoro.colors import (
-    BLUE as _CYAN, AMBER as _YELLOW, AMBER_LT as _GREEN,
-    DIM as _DIM, BOLD as _BOLD, COPPER as _RED, RESET as _RESET,
-    ACCENT, BODY, SECONDARY,
+    BLUE as _CYAN,
+    AMBER as _YELLOW,
+    AMBER_LT as _GREEN,
+    DIM as _DIM,
+    BOLD as _BOLD,
+    COPPER as _RED,
+    RESET as _RESET,
+    ACCENT,
+    BODY,
+    SECONDARY,
 )
 
 PROVIDERS = [
@@ -26,7 +33,11 @@ _PROVIDER_MODELS = {
         ("z-ai/glm-5.1", "GLM 5.1", "default"),
         ("z-ai/glm-5v-turbo", "GLM 5v Turbo", "vision & multimodal"),
         ("anthropic/claude-haiku-4-5", "Claude Haiku 4.5", "fast & cheap"),
-        ("google/gemini-3.1-flash-lite-preview", "Gemini 3.1 Flash", "fast & cheap"),
+        (
+            "google/gemini-3.1-flash-lite-preview",
+            "Gemini 3.1 Flash",
+            "fast & cheap",
+        ),
         ("qwen/qwen3.5-35b-a3b", "Qwen3.5 35B", "open-source & efficient"),
     ],
     "anthropic": [
@@ -43,7 +54,10 @@ _PROVIDER_MODELS = {
 
 # Provider → env var mapping
 _ENV_MAP = {
-    "openrouter": {"api_key": "OPENROUTER_API_KEY", "base_url": "OPENROUTER_BASE_URL"},
+    "openrouter": {
+        "api_key": "OPENROUTER_API_KEY",
+        "base_url": "OPENROUTER_BASE_URL",
+    },
     "anthropic": {"api_key": "ANTHROPIC_API_KEY"},
     "openai": {"api_key": "OPENAI_API_KEY"},
     "vllm": {"api_key": "VLLM_API_KEY", "base_url": "VLLM_BASE_URL"},
@@ -65,7 +79,10 @@ def run_setup_wizard(project_root: Path = None) -> dict:
     """
     print()
     print(f"  {_DIM}╭─────────────────────────────────────╮{_RESET}")
-    print(f"  {_DIM}│  {ACCENT}Totoro Setup{_DIM}                         │{_RESET}")
+    print(
+        f"  {_DIM}│  {ACCENT}Totoro Setup{_DIM}"
+        f"                         │{_RESET}"
+    )
     print(f"  {_DIM}╰─────────────────────────────────────╯{_RESET}")
     print()
 
@@ -84,7 +101,7 @@ def run_setup_wizard(project_root: Path = None) -> dict:
     # 4. Select main model
     model = _select_model(provider, existing)
 
-    # 5. Select lightweight model (for Auto-Dream, Context Compaction, Catbus planner)
+    # 5. Select lightweight model
     fallback_model = _select_lightweight_model(provider, model, existing)
 
     settings = {"provider": provider, "api_key": api_key}
@@ -104,7 +121,9 @@ def run_setup_wizard(project_root: Path = None) -> dict:
     save_settings(settings)
 
     print()
-    print(f"  {_GREEN}✓{_RESET} Saved to {_BOLD}~/.totoro/settings.json{_RESET}")
+    print(
+        f"  {_GREEN}✓{_RESET} Saved to {_BOLD}~/.totoro/settings.json{_RESET}"
+    )
     print()
 
     return settings
@@ -114,27 +133,44 @@ def _select_provider(existing: dict | None) -> str:
     """Prompt user to select an LLM provider interactively.
 
     Args:
-        existing: Existing settings dict for showing current selection, or None.
+        existing: Existing settings dict for showing
+            current selection, or None.
 
     Returns:
-        Selected provider key string (e.g. "openrouter", "anthropic").
+        Selected provider key string.
     """
     current = existing.get("provider") if existing else None
     print(f"  Select your LLM provider:")
     print()
     for i, (key, name, desc) in enumerate(PROVIDERS, 1):
-        marker = f" {_DIM}(current){_RESET}" if key == current else ""
-        print(f"    {_BOLD}{i}){_RESET} {name:<12} {_DIM}({desc}){_RESET}{marker}")
+        marker = (
+            f" {_DIM}(current){_RESET}"
+            if key == current else ""
+        )
+        print(
+            f"    {_BOLD}{i}){_RESET}"
+            f" {name:<12}"
+            f" {_DIM}({desc}){_RESET}{marker}"
+        )
     print()
 
     while True:
         try:
             default_hint = ""
             if current:
-                idx = next((i for i, (k, _, _) in enumerate(PROVIDERS, 1) if k == current), None)
+                idx = next(
+                    (
+                        i
+                        for i, (k, _, _) in enumerate(PROVIDERS, 1)
+                        if k == current
+                    ),
+                    None,
+                )
                 if idx:
                     default_hint = f" [{idx}]"
-            choice = input(f"  > {default_hint and f'{_DIM}{default_hint}{_RESET} '}")
+            choice = input(
+                f"  > {default_hint and f'{_DIM}{default_hint}{_RESET} '}"
+            )
             choice = choice.strip()
 
             if not choice and current:
@@ -143,9 +179,13 @@ def _select_provider(existing: dict | None) -> str:
             num = int(choice)
             if 1 <= num <= len(PROVIDERS):
                 return PROVIDERS[num - 1][0]
-            print(f"  {_RED}1-{len(PROVIDERS)} 사이의 숫자를 입력하세요.{_RESET}")
+            print(
+                f"  {_RED}1-{len(PROVIDERS)} 사이의 숫자를 입력하세요.{_RESET}"
+            )
         except (ValueError, EOFError):
-            print(f"  {_RED}1-{len(PROVIDERS)} 사이의 숫자를 입력하세요.{_RESET}")
+            print(
+                f"  {_RED}1-{len(PROVIDERS)} 사이의 숫자를 입력하세요.{_RESET}"
+            )
         except KeyboardInterrupt:
             print()
             raise SystemExit(0)
@@ -156,15 +196,21 @@ def _enter_api_key(provider: str, existing: dict | None) -> str:
 
     Args:
         provider: Provider key string.
-        existing: Existing settings dict for showing masked current key, or None.
+        existing: Existing settings dict or None.
 
     Returns:
         API key string.
     """
     current_key = existing.get("api_key") if existing else None
-    masked = f"{current_key[:8]}...{current_key[-4:]}" if current_key and len(current_key) > 12 else None
+    masked = (
+        f"{current_key[:8]}...{current_key[-4:]}"
+        if current_key and len(current_key) > 12
+        else None
+    )
 
-    provider_name = next((name for k, name, _ in PROVIDERS if k == provider), provider)
+    provider_name = next(
+        (name for k, name, _ in PROVIDERS if k == provider), provider
+    )
     hint = f" {_DIM}(Enter to keep: {masked}){_RESET}" if masked else ""
     print(f"\n  Enter your {_BOLD}{provider_name}{_RESET} API key:{hint}")
 
@@ -194,7 +240,11 @@ def _enter_base_url(provider: str, existing: dict | None) -> str | None:
     if provider == "openrouter":
         default = "https://openrouter.ai/api/v1"
         current = (existing or {}).get("base_url", default)
-        print(f"\n  OpenRouter Base URL {_DIM}(Enter for default: {current}){_RESET}")
+        print(
+            f"\n  OpenRouter Base URL"
+            f" {_DIM}(Enter for default:"
+            f" {current}){_RESET}"
+        )
         try:
             url = input("  > ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -205,7 +255,9 @@ def _enter_base_url(provider: str, existing: dict | None) -> str | None:
     if provider == "vllm":
         current = (existing or {}).get("base_url")
         hint = f" {_DIM}(Enter to keep: {current}){_RESET}" if current else ""
-        print(f"\n  Enter your vLLM base URL (e.g. http://localhost:8000/v1):{hint}")
+        print(
+            f"\n  Enter your vLLM base URL (e.g. http://localhost:8000/v1):{hint}"
+        )
         while True:
             try:
                 url = input("  > ").strip()
@@ -291,15 +343,25 @@ def _select_model(provider: str, existing: dict | None) -> str | None:
                 selected = models[num - 1][0]
                 print(f"  {_GREEN}✓{_RESET} {selected}")
                 return selected
-            print(f"  {_RED}1-{len(models)} 사이의 숫자 또는 'c'를 입력하세요.{_RESET}")
+            print(
+                f"  {_RED}1-{len(models)}"
+                f" 사이의 숫자 또는 'c'를"
+                f" 입력하세요.{_RESET}"
+            )
         except ValueError:
-            print(f"  {_RED}1-{len(models)} 사이의 숫자 또는 'c'를 입력하세요.{_RESET}")
+            print(
+                f"  {_RED}1-{len(models)}"
+                f" 사이의 숫자 또는 'c'를"
+                f" 입력하세요.{_RESET}"
+            )
         except (EOFError, KeyboardInterrupt):
             print()
             raise SystemExit(0)
 
 
-def _select_lightweight_model(provider: str, main_model: str | None, existing: dict | None) -> str | None:
+def _select_lightweight_model(
+    provider: str, main_model: str | None, existing: dict | None
+) -> str | None:
     """Prompt user to select a lightweight model for auxiliary tasks.
 
     Used for Auto-Dream memory extraction, Context Compaction, and
@@ -308,7 +370,7 @@ def _select_lightweight_model(provider: str, main_model: str | None, existing: d
     Args:
         provider: Provider key string.
         main_model: The selected main model ID.
-        existing: Existing settings dict for showing current selection, or None.
+        existing: Existing settings dict or None.
 
     Returns:
         Selected lightweight model ID, or None to use the main model.
@@ -317,15 +379,22 @@ def _select_lightweight_model(provider: str, main_model: str | None, existing: d
     current = (existing or {}).get("fallback_model")
     main_display = main_model or "none"
 
-    print(f"\n  Select lightweight model {_DIM}(Auto-Dream, Context Compaction){_RESET}:")
+    print(
+        f"\n  Select lightweight model"
+        f" {_DIM}(Auto-Dream, Compaction){_RESET}:"
+    )
     print(f"  {_DIM}Enter to use main model ({main_display}){_RESET}")
     print()
 
     if models:
         for i, (model_id, display_name, note) in enumerate(models, 1):
-            marker = f" {_CYAN}← current{_RESET}" if model_id == current else ""
+            marker = (
+                f" {_CYAN}← current{_RESET}" if model_id == current else ""
+            )
             note_str = f" {_DIM}({note}){_RESET}" if note else ""
-            print(f"    {_BOLD}{i}){_RESET} {display_name:<22}{note_str}{marker}")
+            print(
+                f"    {_BOLD}{i}){_RESET} {display_name:<22}{note_str}{marker}"
+            )
         print(f"    {_BOLD}c){_RESET} {_DIM}Custom model ID...{_RESET}")
         print()
 
@@ -335,7 +404,11 @@ def _select_lightweight_model(provider: str, main_model: str | None, existing: d
 
             # Enter = use main model
             if not choice:
-                print(f"  {_GREEN}✓{_RESET} {_DIM}main model ({main_display}){_RESET}")
+                print(
+                    f"  {_GREEN}✓{_RESET}"
+                    f" {_DIM}main model"
+                    f" ({main_display}){_RESET}"
+                )
                 return None
 
             if models:
@@ -353,7 +426,11 @@ def _select_lightweight_model(provider: str, main_model: str | None, existing: d
                         selected = models[num - 1][0]
                         print(f"  {_GREEN}✓{_RESET} {selected}")
                         return selected
-                    print(f"  {_RED}1-{len(models)} 사이의 숫자, 'c', 또는 Enter{_RESET}")
+                    print(
+                        f"  {_RED}1-{len(models)}"
+                        f" 사이의 숫자, 'c',"
+                        f" 또는 Enter{_RESET}"
+                    )
                 except ValueError:
                     # Treat as custom model ID
                     print(f"  {_GREEN}✓{_RESET} {choice}")
@@ -383,9 +460,16 @@ def _configure_extras(existing: dict | None) -> dict:
     # Tavily
     current_tavily = existing_extras.get("tavily_api_key")
     try:
-        prompt = f"\n  Configure web search (Tavily API key)? {_DIM}[y/N]{_RESET} "
+        prompt = (
+            f"\n  Configure web search (Tavily API key)? {_DIM}[y/N]{_RESET} "
+        )
         if current_tavily:
-            prompt = f"\n  Update Tavily API key? {_DIM}(current: {current_tavily[:8]}...){_RESET} {_DIM}[y/N]{_RESET} "
+            prompt = (
+                f"\n  Update Tavily API key?"
+                f" {_DIM}(current:"
+                f" {current_tavily[:8]}...){_RESET}"
+                f" {_DIM}[y/N]{_RESET} "
+            )
         answer = input(prompt).strip().lower()
     except (EOFError, KeyboardInterrupt):
         answer = "n"
@@ -448,7 +532,9 @@ def load_provider_settings(project_root: Path = None) -> dict | None:
         with open(settings_path) as f:
             data = json.load(f)
         # Must have at least provider and api_key (or base_url for vllm)
-        if data.get("provider") and (data.get("api_key") or data.get("base_url")):
+        if data.get("provider") and (
+            data.get("api_key") or data.get("base_url")
+        ):
             return data
         return None
     except (json.JSONDecodeError, OSError):
@@ -456,7 +542,9 @@ def load_provider_settings(project_root: Path = None) -> dict | None:
 
 
 def inject_env_from_settings(settings: dict):
-    """Inject settings into os.environ so existing provider factories work unchanged.
+    """Inject settings into os.environ.
+
+    Ensures existing provider factories work unchanged.
 
     Args:
         settings: Settings dict with provider, api_key, base_url, and extras.
@@ -481,7 +569,9 @@ def inject_env_from_settings(settings: dict):
     for settings_key, env_key in _EXTRAS_ENV_MAP.items():
         value = extras.get(settings_key)
         if value is not None:
-            os.environ[env_key] = str(value).lower() if isinstance(value, bool) else str(value)
+            os.environ[env_key] = (
+                str(value).lower() if isinstance(value, bool) else str(value)
+            )
 
 
 def ensure_gitignore(project_root: Path):
@@ -502,4 +592,6 @@ def ensure_gitignore(project_root: Path):
         content += f"\n# Totoro settings (contains API keys)\n{entry}\n"
         gitignore_path.write_text(content)
     else:
-        gitignore_path.write_text(f"# Totoro settings (contains API keys)\n{entry}\n")
+        gitignore_path.write_text(
+            f"# Totoro settings (contains API keys)\n{entry}\n"
+        )

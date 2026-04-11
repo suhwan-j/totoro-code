@@ -4,6 +4,7 @@ All providers read from os.environ, which is populated by
 inject_env_from_settings() at CLI boot (from .totoro/settings.json).
 No .env file is needed.
 """
+
 import os
 
 # Anthropic model ID → OpenRouter model ID mapping.
@@ -52,7 +53,12 @@ def create_lightweight_model(
                 return model
 
     # Fallback: try all providers in order
-    for factory in (_make_openrouter, _make_anthropic, _make_openai, _make_vllm):
+    for factory in (
+        _make_openrouter,
+        _make_anthropic,
+        _make_openai,
+        _make_vllm,
+    ):
         model = factory(model_name)
         if model is not None:
             return model
@@ -77,7 +83,9 @@ def _resolve_lightweight_model(model_name: str, provider: str) -> str:
         return _LIGHTWEIGHT_MODELS["openai"]
     if provider == "anthropic" and is_gpt:
         return _LIGHTWEIGHT_MODELS["anthropic"]
-    if provider == "openrouter" and not model_name.startswith(("anthropic/", "openai/")):
+    if provider == "openrouter" and not model_name.startswith(
+        ("anthropic/", "openai/")
+    ):
         mapped = _OPENROUTER_MODEL_MAP.get(model_name)
         if mapped:
             return mapped
@@ -95,15 +103,19 @@ def _make_openrouter(model_name: str):
     resolved = _OPENROUTER_MODEL_MAP.get(model_name, model_name)
     try:
         from langchain_openrouter import ChatOpenRouter
+
         return ChatOpenRouter(model=resolved, api_key=key, max_tokens=1024)
     except Exception:
         pass
     try:
         from langchain_openai import ChatOpenAI
+
         return ChatOpenAI(
             model=resolved,
             openai_api_key=key,
-            openai_api_base=os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"),
+            openai_api_base=os.environ.get(
+                "OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"
+            ),
             max_tokens=1024,
         )
     except Exception:
@@ -116,6 +128,7 @@ def _make_anthropic(model_name: str):
         return None
     try:
         from langchain_anthropic import ChatAnthropic
+
         return ChatAnthropic(model=model_name, max_tokens=1024)
     except Exception:
         return None
@@ -127,7 +140,10 @@ def _make_openai(model_name: str):
         return None
     try:
         from langchain_openai import ChatOpenAI
-        return ChatOpenAI(model=model_name, openai_api_key=key, max_tokens=1024)
+
+        return ChatOpenAI(
+            model=model_name, openai_api_key=key, max_tokens=1024
+        )
     except Exception:
         return None
 
@@ -138,6 +154,7 @@ def _make_vllm(model_name: str):
         return None
     try:
         from langchain_openai import ChatOpenAI
+
         return ChatOpenAI(
             model=model_name,
             openai_api_key=os.environ.get("VLLM_API_KEY", "EMPTY"),
@@ -149,9 +166,11 @@ def _make_vllm(model_name: str):
 
 
 # Initialize provider factory map (must be after function definitions)
-_PROVIDER_FACTORIES.update({
-    "openrouter": _make_openrouter,
-    "anthropic": _make_anthropic,
-    "openai": _make_openai,
-    "vllm": _make_vllm,
-})
+_PROVIDER_FACTORIES.update(
+    {
+        "openrouter": _make_openrouter,
+        "anthropic": _make_anthropic,
+        "openai": _make_openai,
+        "vllm": _make_vllm,
+    }
+)

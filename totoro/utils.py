@@ -1,4 +1,5 @@
 """Shared utilities for Totoro."""
+
 import re
 
 # Matches Unicode surrogate characters (U+D800 to U+DFFF)
@@ -17,7 +18,7 @@ def sanitize_text(text: str) -> str:
         text: Input string that may contain surrogate characters.
 
     Returns:
-        Cleaned string with surrogates replaced by the Unicode replacement character.
+        Cleaned string with surrogates replaced.
     """
     if not isinstance(text, str):
         return str(text)

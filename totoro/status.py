@@ -2,6 +2,7 @@
 
 Thread-safe: multiple subagent workers can update concurrently.
 """
+
 import sys
 import time
 import random
@@ -15,18 +16,25 @@ from totoro.utils import sanitize_text
 
 # ─── ANSI helpers (palette-based) ───
 from totoro.colors import (
-    RESET as _RESET, BOLD as _BOLD,
-    DIM as _DIM, IVORY_DK,
-    BLUE as _CYAN, BLUE_LT as _BODY, BLUE_DK,
-    AMBER as _YELLOW, AMBER_LT,
+    RESET as _RESET,
+    BOLD as _BOLD,
+    DIM as _DIM,
+    IVORY_DK,
+    BLUE as _CYAN,
+    BLUE_LT as _BODY,
+    BLUE_DK,
+    AMBER as _YELLOW,
+    AMBER_LT,
     COPPER as _RED,
-    IVORY as _SECONDARY, IVORY_LT as _WHITE,
+    IVORY as _SECONDARY,
+    IVORY_LT as _WHITE,
     ACCENT,
 )
+
 _ESC = "\033["
-_GREEN = AMBER_LT           # progress / done → amber light
-_BLUE = _CYAN                # tools → blue
-_MAGENTA = _SECONDARY        # subagent spinner → ivory
+_GREEN = AMBER_LT  # progress / done → amber light
+_BLUE = _CYAN  # tools → blue
+_MAGENTA = _SECONDARY  # subagent spinner → ivory
 
 _ICON_DONE = "✓"
 _ICON_ACTIVE = "▸"
@@ -41,18 +49,18 @@ _SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"
 _MAIN_AGENT_NAME = "Totoro"
 
 _CHARACTER_NAMES = {
-    "catbus":     "Catbus",      # 네코버스 — Router/Planner
-    "satsuki":    "Satsuki",     # 사츠키   — Senior Agent
-    "mei":        "Mei",         # 메이     — Explorer/Researcher
-    "tatsuo":     "Tatsuo",      # 타츠오   — Knowledge/Reviewer
+    "catbus": "Catbus",  # 네코버스 — Router/Planner
+    "satsuki": "Satsuki",  # 사츠키   — Senior Agent
+    "mei": "Mei",  # 메이     — Explorer/Researcher
+    "tatsuo": "Tatsuo",  # 타츠오   — Knowledge/Reviewer
     "susuwatari": "Susuwatari",  # 스스와타리 — Micro Agent
 }
 
 _CHARACTER_ICONS = {
-    "catbus":     "🚌",
-    "satsuki":    "🧒",
-    "mei":        "👧",
-    "tatsuo":     "👨",
+    "catbus": "🚌",
+    "satsuki": "🧒",
+    "mei": "👧",
+    "tatsuo": "👨",
     "susuwatari": "🌱",
 }
 
@@ -72,7 +80,9 @@ def _pick_subagent_name(agent_type: str) -> str:
         Display name for the subagent type.
     """
     # Extract type from label like "satsuki-0" → "satsuki"
-    base_type = agent_type.rsplit("-", 1)[0] if "-" in agent_type else agent_type
+    base_type = (
+        agent_type.rsplit("-", 1)[0] if "-" in agent_type else agent_type
+    )
     return _CHARACTER_NAMES.get(base_type, agent_type)
 
 
@@ -96,20 +106,24 @@ class StatusTracker:
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._is_tty: bool = sys.stdout.isatty()  # Disable animations when piped
+        self._is_tty: bool = (
+            sys.stdout.isatty()
+        )  # Disable animations when piped
         self.todos: list[TodoItem] = []
         self.active_subagents: dict[str, SubagentInfo] = {}
         self.completed_subagents: deque[SubagentInfo] = deque(maxlen=50)
         self.current_tool: str | None = None
         self.current_tool_args: str = ""
         self.tool_count: int = 0
-        self.token_input: int = 0    # Total input tokens (main agent)
-        self.token_output: int = 0   # Total output tokens (main agent)
-        self.token_cached: int = 0   # Cached input tokens (prompt caching)
+        self.token_input: int = 0  # Total input tokens (main agent)
+        self.token_output: int = 0  # Total output tokens (main agent)
+        self.token_cached: int = 0  # Cached input tokens (prompt caching)
         self.phase: str = "Initializing"
         self._last_panel_lines: int = 0
         self._panel_enabled: bool = True
-        self.activity_log: deque[str] = deque(maxlen=6)  # Recent file operations
+        self.activity_log: deque[str] = deque(
+            maxlen=6
+        )  # Recent file operations
         self._dirty: bool = True  # Only re-render when state changes
         self._pane_manager = None  # Set by CLI for detailed subagent view
         self.agent_name: str = _pick_agent_name()
@@ -199,7 +213,9 @@ class StatusTracker:
             self.current_tool_args = ""
             self._mark_dirty()
 
-    def on_subagent_tool(self, agent_name: str, tool_name: str, tool_args: dict):
+    def on_subagent_tool(
+        self, agent_name: str, tool_name: str, tool_args: dict
+    ):
         """Record a tool invocation from a subagent worker thread.
 
         Args:
@@ -213,11 +229,13 @@ class StatusTracker:
             if info:
                 info.tool_count += 1
                 summary = _format_tool_summary(tool_name, tool_args)
-                info.current_tool = f"{tool_name}({summary})" if summary else tool_name
+                info.current_tool = (
+                    f"{tool_name}({summary})" if summary else tool_name
+                )
             self._mark_dirty()
 
     def advance_plan(self):
-        """Mark the next pending/in_progress todo as completed. Called by orchestrator."""
+        """Mark next pending todo as completed."""
         with self._lock:
             for todo in self.todos:
                 if todo.status in ("pending", "in_progress"):
@@ -277,7 +295,7 @@ class StatusTracker:
 
     def _clear_previous(self):
         if self._last_panel_lines > 0:
-            # Move cursor up, erase each line, move cursor back up — all on stdout
+            # Move cursor up, erase, move back up
             sys.stdout.write(f"{_ESC}{self._last_panel_lines}A")
             for _ in range(self._last_panel_lines):
                 sys.stdout.write(f"{_ESC}2K\n")
@@ -287,14 +305,24 @@ class StatusTracker:
     def _build_thinking_line(self) -> list[str]:
         """Minimal thinking indicator: spinning dot + agent name."""
         spinner = _SPINNER[self._spinner_idx]
-        return [f"  {_CYAN}{spinner}{_RESET} {_DIM}{self.agent_name} is thinking...{_RESET}"]
+        return [
+            f"  {_CYAN}{spinner}{_RESET}"
+            f" {_DIM}{self.agent_name}"
+            f" is thinking...{_RESET}"
+        ]
 
     def _build_panel(self) -> list[str]:
         width = shutil.get_terminal_size().columns - 2
         lines = []
 
         # ─── Header ───
-        phase_color = _YELLOW if self.phase == "Planning" else _GREEN if self.phase == "Executing" else _DIM
+        phase_color = (
+            _YELLOW
+            if self.phase == "Planning"
+            else _GREEN
+            if self.phase == "Executing"
+            else _DIM
+        )
         agent_count = len(self.active_subagents)
         done_count = sum(1 for t in self.todos if t.status == "completed")
         total_count = len(self.todos)
@@ -314,17 +342,34 @@ class StatusTracker:
                 total_out += p.token_output
                 total_cached += getattr(p, "token_cached", 0)
         if total_in or total_out:
-            counters.append(_format_tokens_detail(total_in, total_out, total_cached))
+            counters.append(
+                _format_tokens_detail(total_in, total_out, total_cached)
+            )
         counter_str = f" {_DIM}{' · '.join(counters)}{_RESET}"
         # Visible length of counter text (without ANSI codes)
         counter_plain = " " + " · ".join(counters)
 
         spinner = _SPINNER[self._spinner_idx]
         # Calculate trailing dashes to fit exactly within terminal width
-        # Visible prefix: "── " + spinner + " " + agent + " " + phase + counter_plain + " "
-        prefix_len = 3 + 1 + 1 + len(self.agent_name) + 1 + len(self.phase) + len(counter_plain) + 1
+        # Visible prefix length calculation
+        prefix_len = (
+            3
+            + 1
+            + 1
+            + len(self.agent_name)
+            + 1
+            + len(self.phase)
+            + len(counter_plain)
+            + 1
+        )
         trailing = max(0, width - prefix_len)
-        lines.append(f"{_DIM}── {_CYAN}{spinner} {self.agent_name}{_RESET} {phase_color}{self.phase}{_RESET}{counter_str} {_DIM}{'─' * trailing}{_RESET}")
+        lines.append(
+            f"{_DIM}── {_CYAN}{spinner}"
+            f" {self.agent_name}{_RESET}"
+            f" {phase_color}{self.phase}{_RESET}"
+            f"{counter_str}"
+            f" {_DIM}{'─' * trailing}{_RESET}"
+        )
 
         # ─── Plan ───
         if self.todos:
@@ -339,17 +384,19 @@ class StatusTracker:
             for todo in self.todos[:8]:
                 if todo.status == "completed":
                     icon = f"{_GREEN}{_ICON_DONE}{_RESET}"
-                    text = f"{_DIM}{todo.content[:width - 8]}{_RESET}"
+                    text = f"{_DIM}{todo.content[: width - 8]}{_RESET}"
                 elif todo.status == "in_progress":
                     icon = f"{_YELLOW}{_ICON_ACTIVE}{_RESET}"
-                    text = f"{_WHITE}{todo.content[:width - 8]}{_RESET}"
+                    text = f"{_WHITE}{todo.content[: width - 8]}{_RESET}"
                 else:
                     icon = f"{_DIM}{_ICON_PENDING}{_RESET}"
-                    text = f"{_DIM}{todo.content[:width - 8]}{_RESET}"
+                    text = f"{_DIM}{todo.content[: width - 8]}{_RESET}"
                 lines.append(f"   {icon} {text}")
 
             if len(self.todos) > 8:
-                lines.append(f"   {_DIM}... +{len(self.todos) - 8} more{_RESET}")
+                lines.append(
+                    f"   {_DIM}... +{len(self.todos) - 8} more{_RESET}"
+                )
 
         # ─── Subagents (Claude Code style) ───
         if self.active_subagents:
@@ -391,8 +438,12 @@ class StatusTracker:
                 # Token + tool stats line
                 stats_parts = [f"{elapsed_str}", f"{tool_count} tools"]
                 if token_in or token_out:
-                    tok_cached = getattr(pane, "token_cached", 0) if pane else 0
-                    stats_parts.append(_format_tokens_detail(token_in, token_out, tok_cached))
+                    tok_cached = (
+                        getattr(pane, "token_cached", 0) if pane else 0
+                    )
+                    stats_parts.append(
+                        _format_tokens_detail(token_in, token_out, tok_cached)
+                    )
                 lines.append(f"     {_DIM}{' · '.join(stats_parts)}{_RESET}")
 
                 # Tool history (last 5) + current tool
@@ -403,36 +454,60 @@ class StatusTracker:
                     visible = history[-max_tool_lines:]
                     for ti, tc in enumerate(visible):
                         prefix = "⎿ " if ti == 0 else "  "
-                        tool_display = tc.summary[:width - 12]
+                        tool_display = tc.summary[: width - 12]
                         if tc.is_error:
-                            lines.append(f"     {_DIM}{prefix}{_RESET}{_RED}{tool_display}{_RESET}")
+                            lines.append(
+                                f"     {_DIM}{prefix}"
+                            f"{_RESET}{_RED}"
+                            f"{tool_display}{_RESET}"
+                            )
                         else:
-                            lines.append(f"     {_DIM}{prefix}{tool_display}{_RESET}")
+                            lines.append(
+                                f"     {_DIM}{prefix}{tool_display}{_RESET}"
+                            )
                     if hidden > 0:
-                        lines.append(f"     {_DIM}  +{hidden} more tool uses{_RESET}")
+                        lines.append(
+                            f"     {_DIM}  +{hidden} more tool uses{_RESET}"
+                        )
 
                 # Current active tool (spinner)
                 if pane and pane.current_tool:
                     spinner = _SPINNER[self._spinner_idx]
-                    lines.append(f"     {_BLUE}{spinner} {pane.current_tool}{_RESET}")
+                    lines.append(
+                        f"     {_BLUE}{spinner} {pane.current_tool}{_RESET}"
+                    )
                 elif info.current_tool:
                     spinner = _SPINNER[self._spinner_idx]
-                    lines.append(f"     {_BLUE}{spinner} {info.current_tool}{_RESET}")
+                    lines.append(
+                        f"     {_BLUE}{spinner} {info.current_tool}{_RESET}"
+                    )
 
         # ─── Current Tool (main agent, no subagents) ───
-        elif self.current_tool and self.current_tool not in ("write_todos", "task", "orchestrate_tool"):
-            lines.append(f"   {_BLUE}{_ICON_TOOL} {self.current_tool}{_RESET} {_DIM}{self.current_tool_args[:width - 15]}{_RESET}")
+        elif self.current_tool and self.current_tool not in (
+            "write_todos",
+            "task",
+            "orchestrate_tool",
+        ):
+            lines.append(
+                f"   {_BLUE}{_ICON_TOOL}"
+                f" {self.current_tool}{_RESET}"
+                f" {_DIM}"
+                f"{self.current_tool_args[:width - 15]}"
+                f"{_RESET}"
+            )
 
         # ─── Activity Log (only shown when no subagents are active) ───
         if self.activity_log and not self.active_subagents:
-            lines.append(f"   {_DIM}── Recent {'─' * max(0, width - 14)}{_RESET}")
+            lines.append(
+                f"   {_DIM}── Recent {'─' * max(0, width - 14)}{_RESET}"
+            )
             for entry in list(self.activity_log)[-4:]:
                 if entry.startswith("+"):
-                    lines.append(f"   {_GREEN}{entry[:width - 6]}{_RESET}")
+                    lines.append(f"   {_GREEN}{entry[: width - 6]}{_RESET}")
                 elif entry.startswith("~"):
-                    lines.append(f"   {_YELLOW}{entry[:width - 6]}{_RESET}")
+                    lines.append(f"   {_YELLOW}{entry[: width - 6]}{_RESET}")
                 else:
-                    lines.append(f"   {_DIM}{entry[:width - 6]}{_RESET}")
+                    lines.append(f"   {_DIM}{entry[: width - 6]}{_RESET}")
 
         # ─── Footer ───
         lines.append(f"{_DIM}{'─' * width}{_RESET}")
@@ -469,7 +544,9 @@ class StatusTracker:
         if agent_total > 0:
             parts.append(f"Subagents: {agent_total}")
         if total_in or total_out:
-            parts.append(_format_tokens_detail(total_in, total_out, total_cached))
+            parts.append(
+                _format_tokens_detail(total_in, total_out, total_cached)
+            )
 
         # Accumulate into session-level counter
         panes = self._pane_manager.get_panes() if self._pane_manager else []
@@ -480,7 +557,12 @@ class StatusTracker:
         )
 
         summary = " · ".join(parts)
-        line = f"{_DIM}── {_CYAN}Done{_DIM} ({summary}) {'─' * max(0, width - len(summary) - 12)}{_RESET}"
+        trail = max(0, width - len(summary) - 12)
+        line = (
+            f"{_DIM}── {_CYAN}Done{_DIM}"
+            f" ({summary})"
+            f" {'─' * trail}{_RESET}"
+        )
         print(line, flush=True)
 
 
@@ -498,7 +580,9 @@ def get_session_tokens() -> dict:
     return _session_tokens.copy()
 
 
-def accumulate_session_tokens(input_tokens: int, output_tokens: int, cached_tokens: int = 0):
+def accumulate_session_tokens(
+    input_tokens: int, output_tokens: int, cached_tokens: int = 0
+):
     """Add token counts to the session-level accumulator.
 
     Args:
@@ -564,7 +648,9 @@ def _format_tokens_detail(input_tok: int, output_tok: int, cached: int) -> str:
         Formatted string (e.g. "up 6.0k down 200 tokens").
     """
     effective_input = max(0, input_tok - cached)
-    return f"↑ {_format_tokens_short(effective_input)} ↓ {_format_tokens_short(output_tok)} tokens"
+    up = _format_tokens_short(effective_input)
+    down = _format_tokens_short(output_tok)
+    return f"↑ {up} ↓ {down} tokens"
 
 
 def _format_tool_summary(name: str, args: dict) -> str:

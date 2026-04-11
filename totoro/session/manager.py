@@ -1,4 +1,5 @@
 """Session management — create, list, restore sessions."""
+
 import time
 import json
 from pathlib import Path
@@ -8,6 +9,7 @@ from dataclasses import dataclass, field
 @dataclass
 class SessionInfo:
     """Metadata for a session."""
+
     session_id: str
     created_at: float
     last_active: float
@@ -25,10 +27,7 @@ def _load_session_index() -> dict[str, SessionInfo]:
         return {}
     try:
         data = json.loads(_SESSION_INDEX_PATH.read_text(encoding="utf-8"))
-        return {
-            sid: SessionInfo(**info)
-            for sid, info in data.items()
-        }
+        return {sid: SessionInfo(**info) for sid, info in data.items()}
     except Exception:
         return {}
 
@@ -70,12 +69,15 @@ class SessionManager:
         """Initialize the session manager.
 
         Args:
-            checkpointer: LangGraph checkpointer instance for state persistence.
+            checkpointer: LangGraph checkpointer for
+                state persistence.
         """
         self._checkpointer = checkpointer
         self._sessions: dict[str, SessionInfo] = _load_session_index()
 
-    def create_session(self, session_id: str | None = None, description: str = "") -> SessionInfo:
+    def create_session(
+        self, session_id: str | None = None, description: str = ""
+    ) -> SessionInfo:
         """Create a new session and return its info.
 
         Args:
@@ -203,6 +205,7 @@ class SessionManager:
             return "No sessions found."
 
         from totoro.colors import BOLD, RESET
+
         lines = [f"{BOLD}Sessions:{RESET}"]
         for s in sessions:
             age = _format_age(time.time() - s.created_at)

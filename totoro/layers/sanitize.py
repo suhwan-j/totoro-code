@@ -1,15 +1,16 @@
-"""Sanitize middleware — strip surrogate characters before model calls.
+"""Sanitize middleware -- strip surrogates before model calls.
 
-deepagents' built-in execute tool (LocalShellBackend) uses subprocess.run(text=True)
-without encoding="utf-8", errors="replace". This can introduce surrogate characters
-(U+D800–U+DFFF) into tool result messages. When the full conversation is serialized
-to JSON for the API call, json.dumps / str.encode('utf-8') will raise:
+deepagents' execute tool (LocalShellBackend) uses
+subprocess.run(text=True) without encoding="utf-8",
+errors="replace". This can introduce surrogate chars
+(U+D800-U+DFFF) into tool result messages. When
+serialized to JSON, json.dumps will raise
+UnicodeEncodeError.
 
-    UnicodeEncodeError: 'utf-8' codec can't encode character '\\udcXX' ...
-
-This middleware runs before every model call and strips surrogates from ALL message
-content, preventing the error regardless of which tool introduced them.
+This middleware runs before every model call and
+strips surrogates from ALL message content.
 """
+
 import re
 from copy import copy
 from typing import Any
@@ -48,10 +49,12 @@ def _sanitize_content(content):
         cleaned = []
         for block in content:
             if isinstance(block, dict):
-                cleaned.append({
-                    k: _clean(v) if isinstance(v, str) else v
-                    for k, v in block.items()
-                })
+                cleaned.append(
+                    {
+                        k: _clean(v) if isinstance(v, str) else v
+                        for k, v in block.items()
+                    }
+                )
             elif isinstance(block, str):
                 cleaned.append(_clean(block))
             else:
