@@ -449,7 +449,7 @@ def _orchestrate_with_auto_dispatch(catbus_tasks: list[dict]) -> str:
     exec_results = _run_parallel(worker_tasks) if worker_tasks else {}
 
     # Phase 3: Verify → Fix → Re-verify loop (max 3 rounds)
-    MAX_RETRY = 3
+    MAX_RETRY = 5
     all_verify_results = {}
 
     for attempt in range(MAX_RETRY):
